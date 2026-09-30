@@ -1,0 +1,34 @@
+{
+  "motor": {
+    "created": "2026-09-30T03:41:58Z",
+    "file": "motor.onnx",
+    "meta": {
+      "feature_names": [
+        "speed_mean",
+        "speed_cv",
+        "speed_max_ratio",
+        "speed_skew",
+        "accel_std_norm",
+        "jerk_std_norm",
+        "jerk_abs_mean_norm",
+        "angle_abs_mean",
+        "angle_std",
+        "dir_change_frac",
+        "angvel_sign_changes",
+        "straightness",
+        "tremor_rms_norm",
+        "tremor_hf_ratio",
+        "peak_pos",
+        "n_speed_peaks",
+        "pause_frac",
+        "step_size_entropy",
+        "speed_spectral_flatness",
+        "curvature_p90",
+        "accel_sign_changes"
+      ],
+      "human_class": 1,
+      "threshold": 0.2021067740285022
+    },
+    "sha256": "42a3eb692540312951f26948c4a05c549e919e8f70dd952c5d3fa979764c80ce"
+  }
+}

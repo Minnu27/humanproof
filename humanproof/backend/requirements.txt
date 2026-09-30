@@ -1,0 +1,18 @@
+# Runtime dependencies (pinned; `pip-audit -r requirements.txt` runs in CI)
+fastapi==0.142.1
+starlette==1.7.0
+uvicorn[standard]==0.46.0
+pydantic==2.13.3
+pydantic-settings==2.15.0
+cryptography==50.0.1
+webauthn==3.0.1
+cbor2==6.1.4
+google-auth==2.59.0
+requests==2.33.1
+httpx==0.28.1
+numpy==2.4.4
+scipy==1.17.1
+onnxruntime==1.25.0
+pillow==12.3.0
+# Speech recognition for the phrase check (required in production)
+faster-whisper>=1.1

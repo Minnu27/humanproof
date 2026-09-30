@@ -1,0 +1,44 @@
+{
+  "dataset": "IIT Kharagpur raw mouse events (humans, 9 users) + synthetic bots (5 families)",
+  "test_users": [
+    "debalina",
+    "harsh",
+    "nikhil"
+  ],
+  "window_auc": 0.9985,
+  "window_eer": 0.0187,
+  "trajectory_threshold": 0.2021067740285022,
+  "trajectory_human_accept_rate": 0.98,
+  "trajectory_bot_reject_rate_by_family": {
+    "linear": 0.9898,
+    "bezier": 0.9159,
+    "spline_follow": 1.0,
+    "submovement": 0.9216,
+    "windmouse": 1.0
+  },
+  "held_out_family_window_auc": {
+    "linear": 0.998,
+    "bezier": 0.9885,
+    "windmouse": 0.9966,
+    "spline_follow": 0.9981,
+    "submovement": 0.9615
+  },
+  "top_features": {
+    "n_speed_peaks": 0.4889,
+    "pause_frac": 0.1923,
+    "accel_sign_changes": 0.1456,
+    "tremor_rms_norm": 0.0381,
+    "speed_cv": 0.0302,
+    "angle_std": 0.0293,
+    "speed_max_ratio": 0.0264,
+    "accel_std_norm": 0.0205
+  },
+  "n_features": 21,
+  "caveats": [
+    "Humans are free desktop mouse use, not challenge tracing, and not touch.",
+    "Bots are synthetic; a novel bot family can score higher than these numbers suggest.",
+    "Retrain on consented tracing data collected by the app before relying on it in production."
+  ],
+  "ood_balabit_human_accept_rate": 0.9898,
+  "onnx_parity_max_abs_diff": 8.6129793075429e-08
+}

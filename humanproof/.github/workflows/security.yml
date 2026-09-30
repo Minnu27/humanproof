@@ -1,0 +1,61 @@
+name: security
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with: { languages: "${{ matrix.language }}", queries: security-extended }
+      - uses: github/codeql-action/analyze@v3
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p backend/models && docker build -t humanproof-api backend
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: humanproof-api
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+  dast:
+    # OWASP ZAP API scan against a running dev instance, driven by the OpenAPI schema.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r backend/requirements.txt
+      - run: |
+          cd backend
+          HP_ENV=dev HP_ALLOW_HEURISTIC_FALLBACK=true nohup uvicorn humanproof.main:app --port 8000 &
+          sleep 5 && curl -fsS http://localhost:8000/healthz
+      - uses: zaproxy/action-api-scan@v0.9.0
+        with:
+          target: http://localhost:8000/openapi.json
+          format: openapi
+          fail_action: true
+          allow_issue_writing: false

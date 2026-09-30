@@ -1,0 +1,40 @@
+{
+  "name": "humanproof-client",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "prepare-assets": "node scripts/copy-wasm.mjs && node scripts/fetch-models.mjs",
+    "dev": "npm run prepare-assets && vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "cap:add": "npx cap add android && npx cap add ios && node scripts/patch-native.mjs",
+    "cap:sync": "npm run build && npx cap sync && node scripts/patch-native.mjs",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "audit:deps": "npm audit --omit=dev --audit-level=high"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
+    "@mediapipe/tasks-vision": "^1.0.1",
+    "@simplewebauthn/browser": "^14.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "@tauri-apps/cli": "^2.12.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.1"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  }
+}

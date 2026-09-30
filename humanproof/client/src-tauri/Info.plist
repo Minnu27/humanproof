@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>HumanProof uses the camera to check that a live person is present. Video never leaves your device.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>HumanProof records a few seconds of you reading five words to check for a live human voice.</string>
+</dict>
+</plist>

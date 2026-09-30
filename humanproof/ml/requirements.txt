@@ -1,0 +1,8 @@
+# CPU-only: motor model (runs anywhere)
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.6
+skl2onnx>=1.18
+onnx>=1.17
+onnxruntime>=1.20
+scipy>=1.13

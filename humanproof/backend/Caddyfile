@@ -1,0 +1,7 @@
+api.humanproof.example {
+	encode zstd gzip
+	request_body {
+		max_size 3MB
+	}
+	reverse_proxy api:8000
+}

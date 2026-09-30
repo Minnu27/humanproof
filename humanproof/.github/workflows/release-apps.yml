@@ -1,0 +1,115 @@
+name: release-apps
+# Builds installable apps for every platform when you push a version tag (v1.2.3).
+# Signing material lives in repository secrets; see docs/RELEASING.md.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+
+env:
+  VITE_API_BASE: ${{ vars.API_BASE }}
+  VITE_RELYING_PARTY: ${{ vars.RELYING_PARTY }}
+  VITE_PLAY_CLOUD_PROJECT: ${{ vars.PLAY_CLOUD_PROJECT }}
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin
+          - platform: windows-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    defaults: { run: { working-directory: client } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: client/package-lock.json }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - if: matrix.platform == 'ubuntu-22.04'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - run: npm ci && npm run prepare-assets
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: client
+          tagName: ${{ github.ref_name }}
+          releaseName: HumanProof ${{ github.ref_name }}
+          releaseDraft: true
+          args: ${{ matrix.args }}
+
+  android:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: client } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: client/package-lock.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: android-actions/setup-android@v3
+      - run: npm ci && npm run prepare-assets && npm run build && npx cap sync android && node scripts/patch-native.mjs
+      - name: Build signed release bundle
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > android/release.jks
+          cd android && ./gradlew bundleRelease assembleRelease \
+            -Pandroid.injected.signing.store.file=$PWD/release.jks \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: |
+            client/android/app/build/outputs/bundle/release/*.aab
+            client/android/app/build/outputs/apk/release/*.apk
+
+  ios:
+    runs-on: macos-latest
+    defaults: { run: { working-directory: client } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: client/package-lock.json }
+      - run: npm ci && npm run prepare-assets && npm run build && npx cap sync ios && node scripts/patch-native.mjs
+      - name: Import signing certificate and profile
+        env:
+          P12_B64: ${{ secrets.IOS_DIST_P12_B64 }}
+          P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+          PROFILE_B64: ${{ secrets.IOS_PROFILE_B64 }}
+        run: |
+          KC=$RUNNER_TEMP/build.keychain; security create-keychain -p "" $KC
+          security set-keychain-settings -lut 21600 $KC; security unlock-keychain -p "" $KC
+          echo "$P12_B64" | base64 -d > $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KC
+          security list-keychain -d user -s $KC
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/hp.mobileprovision
+      - name: Archive and export IPA
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -archivePath $RUNNER_TEMP/App.xcarchive -destination 'generic/platform=iOS' archive \
+            DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }}
+          xcodebuild -exportArchive -archivePath $RUNNER_TEMP/App.xcarchive \
+            -exportOptionsPlist ios-export-options.plist -exportPath $RUNNER_TEMP/ipa
+      - uses: actions/upload-artifact@v4
+        with: { name: ios, path: "${{ runner.temp }}/ipa/*.ipa" }

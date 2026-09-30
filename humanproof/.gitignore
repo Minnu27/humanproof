@@ -1,0 +1,17 @@
+node_modules/
+client/dist/
+client/public/mediapipe/
+client/public/models/
+client/src-tauri/target/
+client/src-tauri/gen/
+backend/var/
+backend/secrets/
+backend/.env
+**/__pycache__/
+.coverage
+*.pt
+client/android/app/src/main/assets/public/
+client/ios/App/App/public/
+client/android/.gradle/
+client/android/build/
+client/android/app/build/

@@ -1,0 +1,25 @@
+# Production-style stack: API behind Caddy (automatic HTTPS). Single API worker because
+# rate limits and passkey challenges are in-process; swap in Redis before scaling out.
+services:
+  api:
+    build: .
+    env_file: .env
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - hpdata:/var/lib/humanproof
+      - ./secrets:/run/secrets:ro
+    restart: unless-stopped
+  proxy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on: [api]
+    restart: unless-stopped
+volumes:
+  hpdata:
+  caddy:

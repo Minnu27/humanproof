@@ -1,0 +1,11 @@
+# Voice + face models (GPU recommended; Colab Pro works)
+-r requirements.txt
+torch>=2.5
+torchaudio>=2.5
+timm>=1.0
+speechbrain>=1.0
+onnxscript>=0.2
+soundfile>=0.12
+mediapipe>=0.10.14
+opencv-python-headless>=4.10
+pillow>=10.4
