@@ -1,0 +1,35 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "backend": {
+      "root": "humanproof/backend",
+      "framework": "fastapi"
+    },
+    "client": {
+      "root": "humanproof/client",
+      "framework": "vite"
+    },
+    "src-tauri": {
+      "root": "humanproof/client/src-tauri",
+      "runtime": "rust"
+    },
+    "ml": {
+      "root": "humanproof/ml",
+      "runtime": "python"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "client"
+      }
+    }
+  ]
+}
