@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Ctx } from "../App";
 import * as api from "../lib/api";
+import { getCapture } from "../lib/diagnostics";
 import { bindPasskey, passkeysSupported } from "../lib/passkey";
 
 interface Props {
@@ -14,7 +15,24 @@ const LABELS: Record<string, string> = { gaze: "Eyes", face: "Face", motor: "Mov
 export function Result({ decision, ctx, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
   const [passkey, setPasskey] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  const [diag, setDiag] = useState<"idle" | "copied" | "failed">("idle");
   const pass = decision.decision === "pass";
+  const round3 = (_: string, v: unknown) => (typeof v === "number" ? Math.round(v * 1000) / 1000 : v);
+
+  const copyDiagnostics = async () => {
+    const payload = {
+      decision: { ...decision, attestation_token: undefined, subject_hint: undefined },
+      capture: getCapture(),
+      screen: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
+      agent: navigator.userAgent,
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, round3));
+      setDiag("copied");
+    } catch {
+      setDiag("failed");
+    }
+  };
 
   const copy = async () => {
     if (!decision.attestation_token) return;
@@ -94,10 +112,31 @@ export function Result({ decision, ctx, onRetry }: Props) {
               ? "Your result was close. Good light, a steady head and a quiet room help."
               : "Please try again in good light, facing the camera, and speaking in your normal voice."}
           </p>
+          {decision.reasons.length > 0 && (
+            <ul className="reasons" aria-label="What the check noticed">
+              {decision.reasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          )}
           <button className="btn btn--primary" onClick={onRetry}>
             Try again
           </button>
         </>
+      )}
+      {decision.debug && (
+        <details className="diag">
+          <summary>Diagnostics (demo mode)</summary>
+          <p className="fineprint">
+            The measurements behind each score, and this attempt's raw numbers (no images or audio). Copy them to
+            share with whoever is tuning the checks.
+          </p>
+          <button className="btn" onClick={copyDiagnostics}>
+            {diag === "copied" ? "Copied" : "Copy diagnostics"}
+          </button>
+          {diag === "failed" && <p className="muted">Copying was blocked. Select the text below instead.</p>}
+          <pre>{JSON.stringify(decision.debug, round3, 1)}</pre>
+        </details>
       )}
     </section>
   );

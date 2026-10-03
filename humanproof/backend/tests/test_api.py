@@ -100,7 +100,7 @@ def test_full_flow_human_passes_and_token_verifies(client, clock, transcriber):
     subject = client.app_ctx.store.get_subject(state["subject_id"])
     assert "pending_voiceprint" not in state
     samples = list(client.app_ctx.store.iter_research_samples("gaze"))
-    assert samples and b"r2_x" not in samples[0]["payload"]
+    assert samples and b"evidence" not in samples[0]["payload"]
     assert client.get("/v1/status").json()["audit_chain_ok"] is True
     assert subject is not None
 
@@ -291,3 +291,15 @@ def test_invalid_api_prefix_rejected():
     for bad in ("api", "/api/", "/API", "/api?x"):
         with pytest.raises(ValidationError):
             Settings(api_prefix=bad)
+
+
+def test_debug_measurements_only_outside_production(client, clock, transcriber):
+    client.app_ctx.models._models["motor"] = HumanMotorModel()
+    _, d = run_flow(client, clock, transcriber, np.random.default_rng(31))
+    assert set(d["debug"]) == {"gaze", "motor", "voice", "face"}
+    assert "evidence" in d["debug"]["gaze"]["features"]
+    assert "dsp" in d["debug"]["voice"]["features"]
+
+    client.app_ctx.settings.env = "prod"
+    _, d = run_flow(client, clock, transcriber, np.random.default_rng(32))
+    assert d["debug"] is None

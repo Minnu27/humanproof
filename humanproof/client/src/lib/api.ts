@@ -60,6 +60,8 @@ export interface Decision {
   reasons: string[];
   attestation_token: string | null;
   subject_hint: string | null;
+  // Present on demo (non-production) servers only: the measurements behind each score.
+  debug?: Record<string, { score?: number; reasons?: string[]; features?: unknown; info?: unknown }> | null;
 }
 
 export class ApiError extends Error {

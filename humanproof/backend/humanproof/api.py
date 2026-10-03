@@ -313,8 +313,19 @@ def finalize(sid: str, request: Request, c: Context = Depends(ctx)):
     return Decision(
         decision=result.decision, score=round(result.score, 3), assurance=state["assurance"],
         checkpoints={k: round(v, 3) for k, v in scores.items()}, reasons=sorted(set(reasons)),
-        attestation_token=token, subject_hint=hint,
+        attestation_token=token, subject_hint=hint, debug=_debug(c, state),
     )
+
+
+def _debug(c: Context, state: dict) -> dict | None:
+    if c.settings.env == "prod":
+        return None
+    out = {
+        cp: {k: state["steps"][cp].get(k) for k in ("score", "reasons", "features")}
+        for cp in STEPS
+    }
+    out["face"] = state.get("face", {})
+    return out
 
 
 def _issue_token(c: Context, subject: str, rp: str, assurance: str, scores: dict, method: str) -> str:

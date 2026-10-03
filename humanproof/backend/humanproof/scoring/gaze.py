@@ -1,17 +1,39 @@
 """Checkpoint 1: face presence + eye movement following a random target.
 
 The client sends per-frame signals derived from MediaPipe face/iris landmarks
-(never video). We test whether the eyes (plus head) *follow the secret random
-path with human timing*:
+(never video). The dot makes a series of jumps to independent random positions,
+and the question is whether the eyes (or head) moved the way *this* path did.
 
-* cross-validated regression of target *movements* from eye/head *movements*
-  (100 ms differences, over a search of lags). Using differences matters:
-  slowly drifting signals (a replayed video) correlate spuriously with any path
-  when compared as levels, but their increments do not line up with the jumps
-  of a secret random path. A pre-recorded or unrelated face scores ~0;
-* saccade latency after each jump (humans: roughly 120-450 ms);
-* natural head micro-motion (a perfectly static face is suspicious);
-* face present in nearly every frame.
+How it is measured
+------------------
+For every jump, the eye signal is summarised just before the jump and again once
+a saccade has had time to land (medians over each fixation). The difference is
+that jump's displacement. Medians over ~6-8 frames average away landmark jitter,
+which matters: single-frame iris positions from a laptop webcam are noisy.
+
+Across the jumps we then ask: does the displacement track where the dot went?
+Specifically the partial correlation between displacement and the dot's new
+position, controlling for its previous position. Controlling matters because
+positions are bounded, so "where it was" already predicts part of "which way it
+moved"; only the unpredictable part of each jump counts as evidence.
+
+Horizontal movement is measured from the iris offset or from head yaw (some
+people turn their head instead), vertical from iris offset, head pitch or eyelid
+opening (lids follow vertical gaze). Laptop webcams usually give a usable
+horizontal signal and little vertical signal, so horizontal evidence alone can
+pass; vertical evidence adds to it when present.
+
+What this stops, and what it does not
+-------------------------------------
+* A looping or unrelated video, and a recording of a real person made during a
+  *different* session, both produce displacements unrelated to this session's
+  jumps (about 1 in 300 such replays reaches a passing score by chance; the
+  other checkpoints still have to pass too).
+* A script that moves the "eyes" at the instant the dot moves is flagged: human
+  saccades start roughly 120-400 ms after the target moves.
+* It does not stop software that sees the challenge and synthesises matching
+  signals with human-like delay. That is what device attestation and the face
+  deepfake model are for.
 
 A trained model (``gaze.onnx``) over the same features is used when present.
 """
@@ -24,13 +46,14 @@ import numpy as np
 from ..challenges import GazeChallenge
 from ..schemas import GazeFrame
 
-GRID_MS = 33.3
-LAGS_MS = np.arange(0, 700, 33.3)
-DIFF_STEPS = 3  # 100 ms
+PRE_MS = (-200.0, 80.0)  # still the old fixation: nobody reacts within 80 ms
+POST_WINDOWS_MS = {"early": (300.0, 620.0), "late": (450.0, 760.0)}  # late suits slow responders
+MIN_EVENTS = 8
+IX, IY, YAW, PITCH, EAR = range(5)
 
 GAZE_FEATURE_NAMES = [
-    "r2_pooled", "r2_x", "r2_y", "best_lag_ms", "saccade_ok_frac", "saccade_latency_med",
-    "blink_rate_per_min", "head_micro_std", "face_ratio", "fps", "pursuit_gain",
+    "evidence", "r_x", "r_y", "n_events", "head_led", "late_window", "latency_med",
+    "latency_n", "blink_rate_per_min", "head_micro_std", "face_ratio", "fps",
 ]
 
 
@@ -40,46 +63,85 @@ class GazeInputError(ValueError):
 
 @dataclass
 class GazeFeatures:
-    r2_pooled: float
-    r2_x: float
-    r2_y: float
-    best_lag_ms: float
-    saccade_ok_frac: float
-    saccade_latency_med: float
-    blink_rate_per_min: float
-    head_micro_std: float
-    face_ratio: float
-    fps: float
-    pursuit_gain: float
+    evidence: float = 0.0        # combined z-score that the displacements follow this path
+    r_x: float = 0.0             # horizontal partial correlation (best of iris, head yaw)
+    r_y: float = 0.0             # vertical partial correlation (best of iris, head pitch, eyelids)
+    n_events: float = 0.0        # jumps with enough frames before and after
+    head_led: float = 0.0        # 1 if head yaw, not the iris, carried the horizontal signal
+    late_window: float = 0.0     # 1 if the later post-jump window fitted better
+    latency_med: float = -1.0    # median ms from jump to eye movement; -1 = not measurable
+    latency_n: float = 0.0
+    blink_rate_per_min: float = 0.0
+    head_micro_std: float = 0.0
+    face_ratio: float = 0.0
+    fps: float = 0.0
 
     def vector(self) -> np.ndarray:
         return np.asarray([getattr(self, n) for n in GAZE_FEATURE_NAMES], dtype=np.float32)
 
 
-def _cv_residuals(X: np.ndarray, y: np.ndarray, blocks: np.ndarray) -> tuple[float, float] | None:
-    """Two-fold cross-validated (SS_res, SS_tot) using alternating 1 s blocks."""
-    preds = np.empty_like(y)
-    for fold in (0, 1):
-        train, test = blocks % 2 != fold, blocks % 2 == fold
-        if train.sum() < 8 or test.sum() < 8:
-            return None
-        coef, *_ = np.linalg.lstsq(X[train], y[train], rcond=None)
-        preds[test] = X[test] @ coef
-    return float(((y - preds) ** 2).sum()), float(((y - y.mean()) ** 2).sum()) + 1e-9
-
-
-def _cv_r2(X: np.ndarray, y: np.ndarray, blocks: np.ndarray) -> float:
-    r = _cv_residuals(X, y, blocks)
-    return 0.0 if r is None else max(-1.0, 1.0 - r[0] / r[1])
-
-
-def _pooled_cv_r2(X: np.ndarray, Y: np.ndarray, blocks: np.ndarray) -> float:
-    """R^2 pooled over both axes, so each axis counts in proportion to how much the
-    target actually moved along it (a mostly vertical path is judged mostly on y)."""
-    rx, ry = _cv_residuals(X, Y[:, 0], blocks), _cv_residuals(X, Y[:, 1], blocks)
-    if rx is None or ry is None:
+def _partial_r(d: np.ndarray, cur: np.ndarray, prev: np.ndarray) -> float:
+    """corr(d, cur | prev)."""
+    A = np.column_stack([prev, np.ones(len(prev))])
+    rd = d - A @ np.linalg.lstsq(A, d, rcond=None)[0]
+    rc = cur - A @ np.linalg.lstsq(A, cur, rcond=None)[0]
+    if rd.std() < 1e-9 or rc.std() < 1e-9:
         return 0.0
-    return max(-1.0, 1.0 - (rx[0] + ry[0]) / (rx[1] + ry[1]))
+    return float(np.corrcoef(rd, rc)[0, 1])
+
+
+def _jumps(ch: GazeChallenge) -> list[tuple[float, float, tuple[float, float], tuple[float, float]]]:
+    """(time, time of next event, previous position, new position) for each jump."""
+    out = []
+    kfs = ch.keyframes
+    pos = (kfs[0].x1, kfs[0].y1)
+    for i, kf in enumerate(kfs[1:], start=1):
+        nxt = kfs[i + 1].start if i + 1 < len(kfs) else ch.duration_ms
+        if kf.mode == "jump":
+            out.append((float(kf.start), float(nxt), pos, (kf.x1, kf.y1)))
+        pos = (kf.x1, kf.y1)
+    return out
+
+
+def _events(t: np.ndarray, sig: np.ndarray, jumps, post: tuple[float, float]):
+    rows, pre_levels, cur, prev, times = [], [], [], [], []
+    for start, nxt, p0, p1 in jumps:
+        a = (t >= start + PRE_MS[0]) & (t <= start + PRE_MS[1])
+        b = (t >= start + post[0]) & (t <= min(nxt + PRE_MS[1], start + post[1]))
+        if a.sum() < 2 or b.sum() < 2:
+            continue
+        pre = np.median(sig[a], axis=0)
+        rows.append(np.median(sig[b], axis=0) - pre)
+        pre_levels.append(pre)
+        cur.append(p1)
+        prev.append(p0)
+        times.append(start)
+    return np.array(rows), np.array(pre_levels), np.array(cur), np.array(prev), np.array(times)
+
+
+def _median3(x: np.ndarray) -> np.ndarray:
+    if len(x) < 3:
+        return x
+    stacked = np.stack([np.r_[x[0], x[:-1]], x, np.r_[x[1:], x[-1]]])
+    return np.median(stacked, axis=0)
+
+
+def _latencies(t: np.ndarray, s: np.ndarray, times: np.ndarray, pre: np.ndarray, delta: np.ndarray) -> np.ndarray:
+    """Per jump: ms until the signal has moved halfway to its new level (two frames running)."""
+    s = _median3(s)
+    typical = np.median(np.abs(delta)) + 1e-12
+    out = []
+    for t0, level, d in zip(times, pre, delta):
+        if abs(d) < 0.6 * typical:
+            continue  # the dot barely moved along this axis; nothing to time
+        m = (t > t0 - 50) & (t <= t0 + 800)
+        moved = (s[m] - level) * np.sign(d) >= 0.5 * abs(d)
+        tm = t[m]
+        for j in range(len(moved)):
+            if moved[j] and (j + 1 >= len(moved) or moved[j + 1]):
+                out.append(tm[j] - t0)
+                break
+    return np.asarray(out)
 
 
 def extract(ch: GazeChallenge, frames: list[GazeFrame]) -> GazeFeatures:
@@ -87,90 +149,57 @@ def extract(ch: GazeChallenge, frames: list[GazeFrame]) -> GazeFeatures:
     t = np.array([f.t for f in fr])
     if np.any(np.diff(t) <= 0):
         raise GazeInputError("Frame timestamps must be strictly increasing")
-    dt = np.median(np.diff(t))
-    fps = 1000.0 / dt
+    fps = 1000.0 / np.median(np.diff(t))
     if not (10 <= fps <= 125):
         raise GazeInputError("Implausible frame rate")
     if t[0] > 400 or t[-1] < 0.9 * ch.duration_ms:
         raise GazeInputError("Frames do not cover the challenge")
 
     face = np.array([f.face for f in fr])
-    face_ratio = float(face.mean())
-    sig = np.array([[f.ix, f.iy, f.yaw, f.pitch] for f in fr])[face]
-    ear = np.array([f.ear for f in fr])[face]
+    out = GazeFeatures(face_ratio=float(face.mean()), fps=float(fps))
+    sig = np.array([[f.ix, f.iy, f.yaw, f.pitch, f.ear] for f in fr])[face]
     tf = t[face]
     if len(tf) < 20:
-        return GazeFeatures(0, 0, 0, 0, 0, 0, 0, 0, face_ratio, fps, 0)
+        return out
 
-    grid = np.arange(0, ch.duration_ms, GRID_MS)
-    S = np.stack([np.interp(grid, tf, sig[:, k]) for k in range(4)], axis=1)
-    S = (S - S.mean(axis=0)) / (S.std(axis=0) + 1e-6)
-    X = np.column_stack([S, np.ones(len(grid))])
-    k = DIFF_STEPS
-    dS = S[k:] - S[:-k]
-    blocks = (grid[k:] // 1000).astype(int)
-
-    best = (-1.0, 0.0)
-    for lag in LAGS_MS:
-        tgt = np.array([ch.target_at(max(0.0, g - lag)) for g in grid])
-        pooled = _pooled_cv_r2(dS, tgt[k:] - tgt[:-k], blocks)
-        if pooled > best[0]:
-            best = (pooled, lag)
-    r2_pooled, lag = best
-    tgt = np.array([ch.target_at(max(0.0, g - lag)) for g in grid])
-    dT = tgt[k:] - tgt[:-k]
-    r2x, r2y = _cv_r2(dS, dT[:, 0], blocks), _cv_r2(dS, dT[:, 1], blocks)
-
-    # Gaze estimate in target units (fit at best lag on everything), used for timing checks.
-    coef_x, *_ = np.linalg.lstsq(X, tgt[:, 0], rcond=None)
-    coef_y, *_ = np.linalg.lstsq(X, tgt[:, 1], rcond=None)
-    gx, gy = X @ coef_x, X @ coef_y
-
-    latencies = []
-    for kf_prev, kf in zip(ch.keyframes, ch.keyframes[1:]):
-        if kf.mode != "jump":
+    jumps = _jumps(ch)
+    best = None
+    for name, post in POST_WINDOWS_MS.items():
+        d, pre, cur, prev, times = _events(tf, sig, jumps, post)
+        n = len(d)
+        out.n_events = max(out.n_events, float(n))
+        if n < MIN_EVENTS:
             continue
-        start_xy = np.array(ch.target_at(kf.start - 1))
-        end_xy = np.array([kf.x1, kf.y1])
-        span = end_xy - start_xy
-        norm = float(span @ span) + 1e-9
-        window = (grid >= kf.start) & (grid <= kf.start + 800)
-        if window.sum() < 3:
-            continue
-        progress = ((np.column_stack([gx, gy])[window] - start_xy) @ span) / norm
-        crossed = np.where(progress >= 0.5)[0]
-        latencies.append(float(grid[window][crossed[0]] - kf.start) if len(crossed) else 9999.0)
-    lat = np.array(latencies) if latencies else np.array([9999.0])
-    sacc_ok = float(np.mean((lat >= 90) & (lat <= 500)))
+        rx = {c: abs(_partial_r(d[:, c], cur[:, 0], prev[:, 0])) for c in (IX, YAW)}
+        ry = {c: abs(_partial_r(d[:, c], cur[:, 1], prev[:, 1])) for c in (IY, PITCH, EAR)}
+        cx = max(rx, key=rx.get)
+        r_x, r_y = rx[cx], max(ry.values())
+        scale = np.sqrt(n - 4)  # Fisher z: roughly standard normal when there is no relationship
+        zx, zy = np.arctanh(min(r_x, 0.999)) * scale, np.arctanh(min(r_y, 0.999)) * scale
+        # Horizontal evidence alone, or both axes together (minus the allowance a
+        # second, possibly empty, axis has to pay), whichever is stronger.
+        evidence = float(max(zx, np.hypot(zx, zy) - 0.45))
+        if best is None or evidence > best[0]:
+            best = (evidence, r_x, r_y, n, cx, name, d, pre, times)
+    if best is not None:
+        evidence, r_x, r_y, n, cx, name, d, pre, times = best
+        out.evidence, out.r_x, out.r_y, out.n_events = evidence, float(r_x), float(r_y), float(n)
+        out.head_led, out.late_window = float(cx == YAW), float(name == "late")
+        lat = _latencies(tf, sig[:, cx], times, pre[:, cx], d[:, cx])
+        out.latency_n = float(len(lat))
+        if len(lat) >= 4:
+            out.latency_med = float(np.median(lat))
 
-    pursuit_gain = 0.0
-    for kf in ch.keyframes:
-        if kf.mode == "glide":
-            m = (grid >= kf.start + 200) & (grid <= kf.end)
-            if m.sum() > 5:
-                tv = np.gradient(np.array([ch.target_at(g) for g in grid[m]]), axis=0)
-                ev = np.gradient(np.column_stack([gx[m], gy[m]]), axis=0)
-                denom = float((tv ** 2).sum()) + 1e-9
-                pursuit_gain = float((tv * ev).sum() / denom)
+    ear = sig[:, EAR]
+    closed = ear < 0.6 * (float(np.median(ear)) + 1e-6)
+    out.blink_rate_per_min = float(np.sum(closed[1:] & ~closed[:-1]) / (ch.duration_ms / 60000.0))
 
-    med_ear = float(np.median(ear)) + 1e-6
-    closed = ear < 0.6 * med_ear
-    blinks = int(np.sum(closed[1:] & ~closed[:-1]))
-    blink_rate = blinks / (ch.duration_ms / 60000.0)
-
-    head = sig[:, 2:4]
+    head = sig[:, [YAW, PITCH]]
     if len(head) > 7:
         k = np.ones(7) / 7
         smooth = np.stack([np.convolve(head[:, i], k, mode="same") for i in (0, 1)], axis=1)
-        micro = float(np.std((head - smooth)[3:-3]))
-    else:
-        micro = 0.0
-
-    return GazeFeatures(
-        r2_pooled=float(r2_pooled), r2_x=float(r2x), r2_y=float(r2y), best_lag_ms=float(lag), saccade_ok_frac=sacc_ok,
-        saccade_latency_med=float(np.median(lat)), blink_rate_per_min=float(blink_rate),
-        head_micro_std=micro, face_ratio=face_ratio, fps=float(fps), pursuit_gain=pursuit_gain,
-    )
+        out.head_micro_std = float(np.std((head - smooth)[3:-3]))
+    return out
 
 
 def _clip01(v: float) -> float:
@@ -179,20 +208,25 @@ def _clip01(v: float) -> float:
 
 def heuristic_score(f: GazeFeatures) -> tuple[float, list[str]]:
     reasons = []
-    if f.face_ratio < 0.85:
+    face = 1.0 if f.face_ratio >= 0.85 else 0.1
+    if face < 1:
         reasons.append("face not continuously visible")
-    track = _clip01((f.r2_pooled - 0.12) / 0.25)
-    if track < 0.3:
-        reasons.append("eyes did not follow the target")
-    lag_ok = 1.0 if 60 <= f.best_lag_ms <= 500 else 0.25
-    if lag_ok < 1:
+    if f.n_events < MIN_EVENTS:
+        reasons.append("not enough camera frames to measure eye movement")
+    # Measured on simulated replays (docs/MODELS.md): about 1 in 100 unrelated
+    # recordings reaches evidence 3.4 (score 0.25) and about 1 in 300 reaches 3.75
+    # (score 0.5). Real webcam users typically land above 4.5.
+    track = _clip01((f.evidence - 3.0) / 1.5)
+    if track < 0.3 and f.n_events >= MIN_EVENTS:
+        reasons.append("eyes did not follow the dot")
+    timing = 1.0
+    if f.latency_med >= 0 and not (80 <= f.latency_med <= 650):
+        timing = 0.2  # below the checkpoint floor on its own
         reasons.append("eye response timing not human")
-    sacc = 0.35 + 0.65 * _clip01(f.saccade_ok_frac / 0.6)
     micro = 1.0 if f.head_micro_std > 0.01 else 0.4
     if micro < 1:
         reasons.append("no natural head micro-movement")
-    face = 1.0 if f.face_ratio >= 0.85 else 0.1
-    return _clip01(np.sqrt(track) * lag_ok * sacc * micro * face), reasons
+    return _clip01(track * timing * micro * face), reasons
 
 
 def score(ch: GazeChallenge, frames: list[GazeFrame], model) -> tuple[float, list[str], dict]:

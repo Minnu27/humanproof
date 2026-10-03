@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Ctx } from "../App";
 import * as api from "../lib/api";
+import { recordCapture } from "../lib/diagnostics";
 import { useOnceJob } from "../lib/useOnceJob";
 
 interface Props {
@@ -128,6 +129,10 @@ export function MotorStep({ ctx, onDone, onError }: Props) {
     const c = canvasRef.current!;
     setSending(true);
     setMsg("Checking…");
+    recordCapture("motor", {
+      polyline: challenge?.polyline, pointer: pointerType.current, samples: samples.current,
+      w: Math.round(c.clientWidth), h: Math.round(c.clientHeight),
+    });
     try {
       const r = await api.submitCheckpoint(
         ctx.session.session_id,

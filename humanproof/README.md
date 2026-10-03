@@ -2,11 +2,12 @@
 
 A verification layer that answers one question for any app, bank or video call:
 **is a live human on the other end right now?** Before registering (or before a
-risky action), the person completes three short checkpoints, about 40 seconds in total:
+risky action), the person completes three short checkpoints, about 45 seconds in total:
 
-1. **Eyes:** follow a dot along a secret random path. On-device face tracking
-   measures eye and head movement; the server checks that the eyes follow *this*
-   path with human timing, and runs a deepfake detector on four face snapshots.
+1. **Eyes:** look at a dot as it jumps to 12 random positions. On-device face
+   tracking measures eye and head movement; the server checks that the eyes moved
+   the way *this* path did, with human timing, and runs a deepfake detector on
+   four face snapshots.
 2. **Movement:** trace a random curve with a mouse, finger or arrow keys. A model
    trained on real human movement separates human motor dynamics from scripts.
 3. **Voice:** read five random words. Speech recognition checks the words, an
