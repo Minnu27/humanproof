@@ -40,8 +40,8 @@ export function CameraCheck({ ctx, onReady }: { ctx: Ctx; onReady: () => void })
         {hint}
       </p>
       <p className="fineprint">
-        {ctx.attested ? "Device verified." : "Running in browser mode."} Keep your head roughly still during the
-        next step and move only your eyes.
+        {ctx.attested ? "Device verified." : "Running in browser mode."} Next, a dot will jump around the
+        screen. Just look at it each time it moves.
       </p>
       <button className="btn btn--primary" disabled={!ok} onClick={onReady}>
         I'm ready

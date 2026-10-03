@@ -19,7 +19,7 @@ verified human can still choose to commit fraud.
 
 | # | Attack | Defence | Where |
 |---|---|---|---|
-| A1 | **Replay a recorded human** (video, mouse trace, audio) | Every challenge (dot path, curve, five words) is fresh CSPRNG output, revealed only when the checkpoint starts; responses must follow *this* challenge | `challenges.py`, gaze regression, motor adherence, phrase match |
+| A1 | **Replay a recorded human** (video, mouse trace, audio) | Every challenge (dot path, curve, five words) is fresh CSPRNG output, revealed only when the checkpoint starts; responses must follow *this* challenge | `challenges.py`, per-jump eye displacement vs an unpredictable dot path (`scoring/gaze.py`), motor adherence, phrase match |
 | A2 | **Pre-compute responses** | Challenge hidden until `/start`; submissions accepted only inside a time window (not faster than the challenge can physically be performed); one submission per checkpoint | `api.py` `_begin_submit` |
 | A3 | **Scripted bot drives the API directly** with synthetic signals | Motor model trained on real human movement vs five bot families; gaze timing (saccade latency, micro-motion); voice anti-spoof on *raw audio*; face deepfake model on *raw pixels*; fused decision with per-checkpoint floors | `scoring/*`, `fusion.py` |
 | A4 | **Real-time deepfake face + cloned voice** (the $25M case) | Face-crop deepfake detector; voice anti-spoofing model; lip-sync check across face and voice; random words defeat pre-generated TTS | `face.py`, `voice.py` |

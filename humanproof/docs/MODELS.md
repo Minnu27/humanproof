@@ -49,6 +49,43 @@ curve, and none used touch. Turn on consented data collection
 `backend/tools/export_research.py`, and retrain before relying on the motor
 checkpoint alone. Touch input is scored with extra caution in the meantime.
 
+## Eye check (rules, no trained model yet)
+
+The dot makes 12 jumps to independent random positions over about 10 seconds. For
+each jump the server compares the eye signal just before with the signal once a
+saccade has landed, then asks whether those displacements track where the dot
+went (partial correlation controlling for the previous position; details in
+`backend/humanproof/scoring/gaze.py`).
+
+Numbers below come from **simulation**. The redesign was prompted by one real
+session; it has not been calibrated on real users yet.
+
+| Simulated case | Scores 0.5 or better |
+|---|---|
+| Laptop-webcam user (small, noisy, horizontal-only eye signal) | 98% |
+| Same, noisier camera | 78% |
+| Slow reactions and 15 fps | about 83% |
+| Turns head instead of eyes | 100% |
+| **Attack:** unrelated or looping video | 1 in 460 |
+| **Attack:** real recording made during a different session | 1 in 260 to 1 in 500 |
+| **Attack:** script moving the eyes with zero delay | 0 |
+
+**Two flaws found the first time a real person used the deployed app.** The
+original eye check scored that person 0.30. Simulating webcam-quality signals
+showed why: it compared frame-to-frame changes, which landmark jitter swamps, so
+only about 4% of webcam-like users reached 0.5. The same investigation showed a
+security hole: the dot path forced a big horizontal step on every jump, so it
+bounced left-right-left-right, and a clean recording from *another* session
+reached 0.5 about 9% of the time. Both are fixed by the design above. The
+earlier tests missed this because the simulated "human" was far cleaner than a
+webcam and the only simulated attack was a drifting video.
+
+**To calibrate on real people:** in demo mode the result screen has a
+"Copy diagnostics" button that copies the attempt's raw eye, pointer and mouth
+measurements (numbers only) with the server's scores. Collect these from
+consenting testers, re-run `gaze.score` on them, and adjust the thresholds in
+`heuristic_score`.
+
 ## Voice anti-spoofing (you run this)
 
 Data: ASVspoof 2019 LA (text-to-speech and voice conversion attacks), optional

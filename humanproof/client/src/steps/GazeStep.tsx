@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { Ctx } from "../App";
 import * as api from "../lib/api";
 import { analyse, cropFace, onFrames } from "../lib/face";
+import { recordCapture } from "../lib/diagnostics";
 import { useOnceJob } from "../lib/useOnceJob";
 
 /** Same semantics as backend challenges.GazeChallenge.target_at(). */
@@ -81,6 +82,7 @@ export function GazeStep({ ctx, onDone, onError }: Props) {
       if (!alive()) return;
       setPhase("send");
       const area = areaRef.current!;
+      recordCapture("gaze", { challenge: ch, frames, crops: crops.length, w: area.clientWidth, h: area.clientHeight });
       const result = await api.submitCheckpoint(
         ctx.session.session_id,
         "gaze",
@@ -105,7 +107,7 @@ export function GazeStep({ ctx, onDone, onError }: Props) {
         {phase === "ready" && (
           <div className="stage-msg">
             <h1>Follow the dot with your eyes</h1>
-            <p>Keep your head still. Starting in {count}…</p>
+            <p>It jumps around for about 10 seconds. Look at it each time it moves. Starting in {count}…</p>
           </div>
         )}
         {phase === "send" && (

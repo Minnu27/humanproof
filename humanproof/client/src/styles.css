@@ -465,3 +465,32 @@ h1 {
     animation-duration: 3s;
   }
 }
+
+.reasons {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.diag {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.diag summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--muted);
+}
+.diag pre {
+  margin: 12px 0 0;
+  padding: 12px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--ink) 6%, var(--surface));
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

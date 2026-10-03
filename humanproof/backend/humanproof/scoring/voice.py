@@ -126,8 +126,16 @@ def score(
     if transcriber is None:
         if not allow_fallback:
             return 0.0, ["speech recognition not configured"], info, None
-        phrase_factor = 0.5
-        reasons.append("phrase not verified (no ASR configured; dev mode)")
+        # Demo mode: without speech recognition the words cannot be checked, so
+        # only require that the clip holds a plausible amount of speech. (This used
+        # to halve the score outright, which capped the whole voice checkpoint at
+        # 0.5 and made a pass in demo mode nearly impossible for real people.)
+        spoke = feats.speech_ratio >= 0.2 and feats.voiced_ratio >= 0.08
+        phrase_factor = 0.85 if spoke else 0.3
+        info["phrase_checked"] = False
+        reasons.append("words not checked (speech recognition is off in demo mode)")
+        if not spoke:
+            reasons.append("not enough speech in the recording")
     else:
         matched, heard = phrase_match(ch.words, transcriber.transcribe(x))
         info.update(words_matched=matched, heard=heard)

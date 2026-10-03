@@ -3,7 +3,7 @@ export function Welcome({ onStart }: { onStart: () => void }) {
     <section className="card">
       <p className="eyebrow">Verification</p>
       <h1>Show you're a real person</h1>
-      <p className="lead">Three short tasks, about 40 seconds in total. Nothing to type, nothing to upload.</p>
+      <p className="lead">Three short tasks, about 45 seconds in total. Nothing to type, nothing to upload.</p>
       <ol className="tasks">
         <li>
           <span className="task-n">1</span>

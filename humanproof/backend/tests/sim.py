@@ -48,6 +48,36 @@ def human_gaze_frames(ch: GazeChallenge, rng: np.random.Generator, lag_ms: float
     return frames
 
 
+def webcam_gaze_frames(ch: GazeChallenge, rng: np.random.Generator, *, path: GazeChallenge | None = None,
+                       lag_ms: float = 220, fps: float = 24, x_gain: float = 0.30, noise: float = 0.04,
+                       y_gain: float = 0.0, lid_gain: float = 0.0, head_gain: float = 0.0):
+    """Closer to a laptop webcam than ``human_gaze_frames``: a small horizontal iris
+    signal under landmark jitter, almost no vertical signal, a nearly still head.
+
+    ``path`` simulates replaying a recording: the eyes follow *that* challenge while
+    the result is scored against ``ch``. ``head_gain`` (degrees per screen width)
+    models someone who turns their head toward the dot.
+    """
+    src = path or ch
+    t = np.arange(0, ch.duration_ms + 150, 1000 / fps) + rng.uniform(0, 3)
+    cur = np.array(src.target_at(0))
+    frames = []
+    for ti in t:
+        cur = cur + 0.65 * (np.array(src.target_at(max(0.0, ti - lag_ms))) - cur)
+        frames.append({
+            "t": float(ti),
+            "ix": float(np.clip(x_gain * (cur[0] - 0.5) + rng.normal(0, noise), -1.9, 1.9)),
+            "iy": float(np.clip(y_gain * (cur[1] - 0.5) + rng.normal(0, noise * 1.5), -1.9, 1.9)),
+            "yaw": float(head_gain * (cur[0] - 0.5) + rng.normal(0, 0.4)),
+            "pitch": float(rng.normal(0, 0.4)),
+            "roll": 0.0,
+            "ear": float(np.clip(0.28 - lid_gain * (cur[1] - 0.5) + rng.normal(0, 0.012), 0.01, 1.4)),
+            "mouth": 0.05,
+            "face": True,
+        })
+    return frames
+
+
 def replayed_gaze_frames(ch: GazeChallenge, rng: np.random.Generator, fps: float = 30):
     """A pre-recorded face video: eye movement unrelated to this challenge."""
     other = np.cumsum(rng.normal(0, 0.05, (int(ch.duration_ms / 1000 * fps) + 5, 2)), axis=0)

@@ -107,35 +107,41 @@ def _point(margin: float = 0.12) -> tuple[float, float]:
     return (round(_rng.uniform(margin, 1 - margin), 4), round(_rng.uniform(margin, 1 - margin), 4))
 
 
-def _gaze_target(last: tuple[float, float], min_dist: float) -> tuple[float, float]:
-    """Next dot position: far enough away, and moving along *both* axes, so eye
-    movement can be measured horizontally and vertically on every challenge."""
+GAZE_JUMPS = 12
+
+
+def _gaze_target(r, last: tuple[float, float]) -> tuple[float, float]:
+    """Next dot position, drawn independently of where the dot has been.
+
+    Only a minimum distance is enforced (so every jump is a visible eye movement).
+    Deliberately *not* enforced: a large horizontal step on every jump. That rule
+    made the dot bounce left-right-left-right, which is predictable: eye movement
+    recorded during one session then correlated strongly with the path of another.
+    """
     while True:
-        p = _point()
-        if _dist(p, last) >= min_dist and abs(p[0] - last[0]) >= 0.15 and abs(p[1] - last[1]) >= 0.1:
+        p = (round(r.uniform(0.10, 0.90), 4), round(r.uniform(0.12, 0.88), 4))
+        if _dist(p, last) >= 0.3:
             return p
 
 
-def make_gaze_challenge() -> GazeChallenge:
-    """~7 s: a lead-in fixation, random jumps (saccades) and one glide (smooth pursuit)."""
+def make_gaze_challenge(rng=None) -> GazeChallenge:
+    """~10 s: a lead-in fixation, then 12 jumps to independent random positions.
+
+    Scoring needs many independent events: each jump is one. ``rng`` (anything
+    with the ``random.Random`` interface) is for reproducible tests only;
+    production always uses the OS CSPRNG.
+    """
+    r = rng or _rng
     kfs = [GazeKeyframe(0, 0, 0.5, 0.5, 0.5, 0.5)]
-    t = _rng.randint(900, 1200)
+    t = r.randint(900, 1200)
     last = (0.5, 0.5)
-    n_jumps = _rng.randint(4, 5)
-    glide_after = _rng.randint(1, n_jumps - 1)
-    for i in range(n_jumps):
-        p = _gaze_target(last, 0.3)  # big enough to produce a clear eye movement
+    for _ in range(GAZE_JUMPS):
+        p = _gaze_target(r, last)
         kfs.append(GazeKeyframe(t, t, p[0], p[1], p[0], p[1]))
         last = p
-        t += _rng.randint(750, 1100)
-        if i == glide_after:
-            g = _gaze_target(last, 0.35)
-            glide_ms = _rng.randint(1400, 1900)
-            kfs.append(GazeKeyframe(t, t + glide_ms, last[0], last[1], g[0], g[1]))
-            last = g
-            t += glide_ms + _rng.randint(400, 600)
+        t += r.randint(600, 850)  # long enough for a slow saccade plus a measurable fixation
     duration = t
-    captures = sorted(_rng.sample(range(800, duration - 200, 50), 4))
+    captures = sorted(r.sample(range(800, duration - 200, 50), 4))
     return GazeChallenge(duration, kfs, captures)
 
 

@@ -121,3 +121,6 @@ class Decision(BaseModel):
     reasons: list[str]
     attestation_token: str | None = None
     subject_hint: str | None = None
+    # Per-checkpoint measurements behind the scores. Never sent in production:
+    # it would tell an attacker exactly which signal to improve.
+    debug: dict | None = None

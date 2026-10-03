@@ -1,4 +1,5 @@
 import os
+import random
 from pathlib import Path
 
 import numpy as np
@@ -24,16 +25,29 @@ def test_challenges_are_unpredictable():
 def test_gaze_challenge_shape():
     for _ in range(50):
         g = C.make_gaze_challenge()
-        assert 5000 < g.duration_ms < 10000
+        assert 8000 < g.duration_ms < 11500
         assert all(0 < c < g.duration_ms for c in g.capture_ms)
-        assert any(k.mode == "glide" for k in g.keyframes)
-        for k in g.keyframes:
-            assert 0.1 <= k.x1 <= 0.9 and 0.1 <= k.y1 <= 0.9
-        # the target path is continuous during glides and holds between keyframes
-        for kf in g.keyframes:
-            if kf.mode == "glide":
-                mid = g.target_at((kf.start + kf.end) / 2)
-                assert mid == pytest.approx(((kf.x0 + kf.x1) / 2, (kf.y0 + kf.y1) / 2), abs=1e-6)
+        jumps = g.keyframes[1:]
+        assert len(jumps) == C.GAZE_JUMPS and all(k.mode == "jump" for k in jumps)
+        pos = (0.5, 0.5)
+        for prev, k in zip(g.keyframes, jumps):
+            assert 0.1 <= k.x1 <= 0.9 and 0.12 <= k.y1 <= 0.88
+            assert 600 <= k.start - prev.start or prev.start == 0
+            assert np.hypot(k.x1 - pos[0], k.y1 - pos[1]) >= 0.3  # every jump is a visible eye movement
+            assert g.target_at(k.start - 1) == pos and g.target_at(k.start) == (k.x1, k.y1)
+            pos = (k.x1, k.y1)
+
+
+def test_gaze_path_is_not_predictable():
+    """The dot must not bounce left-right-left-right: horizontal moves of two
+    independent challenges should be unrelated (this is what defeats replays)."""
+    r = random.Random(3)
+    corrs = []
+    for _ in range(300):
+        a, b = C.make_gaze_challenge(r), C.make_gaze_challenge(r)
+        dx = [np.diff([k.x1 for k in c.keyframes]) for c in (a, b)]
+        corrs.append(np.corrcoef(dx[0], dx[1])[0, 1])
+    assert abs(np.mean(corrs)) < 0.05 and np.mean(np.abs(corrs) > 0.8) < 0.02
 
 
 def test_voice_words_unique():
@@ -43,36 +57,62 @@ def test_voice_words_unique():
 
 
 # ---- gaze -------------------------------------------------------------------------
+# Challenges are seeded here so that the measured rates are reproducible.
 
 def _frames(fs):
     return [GazeFrame(**f) for f in fs]
 
 
+def _gaze_scores(make_frames, n, seed):
+    r, rng = random.Random(seed), np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        ch, other = C.make_gaze_challenge(r), C.make_gaze_challenge(r)
+        out.append(gaze.score(ch, _frames(make_frames(ch, other, rng)), None))
+    return out
+
+
 def test_gaze_human_follower_passes():
-    rng = np.random.default_rng(1)
-    for _ in range(5):
-        ch = C.make_gaze_challenge()
-        s, reasons, feats = gaze.score(ch, _frames(sim.human_gaze_frames(ch, rng)), None)
-        assert s > 0.6, reasons
-        assert 100 <= feats["best_lag_ms"] <= 400
+    res = _gaze_scores(lambda ch, o, rng: sim.human_gaze_frames(ch, rng), 20, 1)
+    assert all(s > 0.6 for s, _, _ in res)
+    assert all(120 <= f["latency_med"] <= 400 for _, _, f in res)
+
+
+def test_gaze_webcam_quality_humans_pass():
+    """Small, noisy, horizontal-only eye signal, as from a laptop webcam."""
+    cases = {  # name: (simulation settings, minimum share scoring 0.5 or better)
+        "typical": (dict(), 0.93),
+        "turns head instead of eyes": (dict(x_gain=0, head_gain=10, lag_ms=300), 0.93),
+        # Worst case: slow reactions *and* a low frame rate leave few frames per
+        # fixation. Measured around 83%; these users are asked to retry.
+        "slow responder, 15 fps": (dict(lag_ms=380, fps=15), 0.72),
+    }
+    for name, (kw, floor) in cases.items():
+        scores = np.array([s for s, _, _ in _gaze_scores(
+            lambda ch, o, rng: sim.webcam_gaze_frames(ch, rng, **kw), 200, 2)])
+        assert np.mean(scores >= 0.5) > floor, (name, float(np.mean(scores >= 0.5)))
+    _, _, f = _gaze_scores(lambda ch, o, rng: sim.webcam_gaze_frames(ch, rng, x_gain=0, head_gain=10), 1, 3)[0]
+    assert f["head_led"] == 1.0
 
 
 def test_gaze_replayed_video_fails():
-    rng = np.random.default_rng(2)
-    for _ in range(40):
-        ch = C.make_gaze_challenge()
-        s, _, _ = gaze.score(ch, _frames(sim.replayed_gaze_frames(ch, rng)), None)
-        assert s < 0.3
+    scores = np.array([s for s, _, _ in _gaze_scores(lambda ch, o, rng: sim.replayed_gaze_frames(ch, rng), 400, 4)])
+    assert np.mean(scores >= 0.25) < 0.03 and np.mean(scores >= 0.5) < 0.015
+
+
+def test_gaze_recording_from_another_session_fails():
+    """A genuine recording of a person doing a *different* challenge, replayed."""
+    for kw in (dict(), dict(x_gain=0.9, noise=0.01, y_gain=0.5, lid_gain=0.05)):
+        scores = np.array([s for s, _, _ in _gaze_scores(
+            lambda ch, o, rng: sim.webcam_gaze_frames(ch, rng, path=o, **kw), 400, 5)])
+        assert np.mean(scores >= 0.25) < 0.03 and np.mean(scores >= 0.5) < 0.015
 
 
 def test_gaze_zero_lag_script_penalised():
     """A script that moves the 'eyes' exactly with the target (no human latency)."""
-    rng = np.random.default_rng(3)
-    ch = C.make_gaze_challenge()
-    s_bot, reasons, feats = gaze.score(ch, _frames(sim.human_gaze_frames(ch, rng, lag_ms=0)), None)
-    s_hum, _, _ = gaze.score(ch, _frames(sim.human_gaze_frames(ch, rng)), None)
-    assert feats["best_lag_ms"] < 60
-    assert s_bot < 0.5 < s_hum
+    res = _gaze_scores(lambda ch, o, rng: sim.webcam_gaze_frames(ch, rng, lag_ms=0, x_gain=0.5, noise=0.02), 20, 6)
+    assert all(f["latency_med"] < 80 for _, _, f in res)
+    assert all(s < 0.25 and "eye response timing not human" in r for s, r, _ in res)
 
 
 def test_gaze_rejects_bad_timing_and_coverage():
@@ -95,6 +135,28 @@ def test_gaze_absent_face_fails():
         f["face"] = False
     s, reasons, _ = gaze.score(ch, _frames(frames), None)
     assert s < 0.25 and any("face" in r for r in reasons)
+
+
+def test_gaze_too_few_frames_is_reported():
+    rng = np.random.default_rng(6)
+    ch = C.make_gaze_challenge()
+    frames = sim.webcam_gaze_frames(ch, rng, fps=11)
+    for f in frames:  # face lost for most of the run
+        f["face"] = f["t"] < 2500 or f["t"] > ch.duration_ms - 300
+    s, reasons, feats = gaze.score(ch, _frames(frames), None)
+    assert s == 0 and feats["n_events"] < gaze.MIN_EVENTS
+    assert "not enough camera frames to measure eye movement" in reasons
+
+
+def test_gaze_handles_legacy_glide_keyframes():
+    """Sessions created before the 12-jump design may still carry a glide."""
+    kfs = [C.GazeKeyframe(0, 0, .5, .5, .5, .5), C.GazeKeyframe(1000, 1000, .2, .3, .2, .3),
+           C.GazeKeyframe(1800, 3300, .2, .3, .8, .7), C.GazeKeyframe(3900, 3900, .3, .6, .3, .6)]
+    ch = C.GazeChallenge(4700, kfs, [1000])
+    jumps = gaze._jumps(ch)
+    assert [j[0] for j in jumps] == [1000.0, 3900.0] and jumps[1][2] == (.8, .7)
+    s, reasons, _ = gaze.score(ch, _frames(sim.webcam_gaze_frames(ch, np.random.default_rng(0))), None)
+    assert s == 0 and "not enough camera frames to measure eye movement" in reasons
 
 
 # ---- motor ------------------------------------------------------------------------
@@ -261,3 +323,21 @@ def test_web_needs_more_evidence_than_attested_device():
     scores = {"gaze": 0.74, "face": 0.74, "motor": 0.74, "voice": 0.74}
     assert fusion.fuse(scores, "device_attested").decision == "pass"
     assert fusion.fuse(scores, "web").decision == "step_up"
+
+
+def test_voice_demo_mode_without_speech_recognition():
+    """No ASR in demo mode: real speech is not capped at half marks, silence still fails."""
+    rng = np.random.default_rng(6)
+    ch = C.make_voice_challenge()
+    x = sim.speech_like(rng)
+    sub = VoiceSubmission(audio_wav_b64=sim.wav_b64(x), audio_offset_ms=0, mouth_frames=sim.mouth_frames_for(x, rng))
+    s, reasons, info, _ = voice.score(ch, sub, antispoof_model=None, speaker_model=None,
+                                      transcriber=None, allow_fallback=True)
+    assert 0.6 < s <= 0.85 and info["phrase_checked"] is False
+    assert any("words not checked" in r for r in reasons)
+
+    quiet = (rng.normal(0, 0.002, len(x))).astype(np.float32)  # room noise, nobody speaking
+    sub = VoiceSubmission(audio_wav_b64=sim.wav_b64(quiet), audio_offset_ms=0)
+    s, reasons, _, _ = voice.score(ch, sub, antispoof_model=None, speaker_model=None,
+                                   transcriber=None, allow_fallback=True)
+    assert s < 0.25 and "not enough speech in the recording" in reasons

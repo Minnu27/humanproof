@@ -3,6 +3,7 @@ import type { Ctx } from "../App";
 import * as api from "../lib/api";
 import { Recorder, toBase64 } from "../lib/audio";
 import { analyse, onFrames } from "../lib/face";
+import { recordCapture } from "../lib/diagnostics";
 import { useOnceJob } from "../lib/useOnceJob";
 
 interface Props {
@@ -83,6 +84,9 @@ export function VoiceStep({ ctx, onDone, onError }: Props) {
         setState("idle");
         return;
       }
+      recordCapture("voice", {
+        seconds: out.seconds, audio_offset_ms: Math.round(out.startedAt - tl0.current), mouth_frames: mouth.current,
+      });
       const result = await api.submitCheckpoint(
         ctx.session.session_id,
         "voice",
