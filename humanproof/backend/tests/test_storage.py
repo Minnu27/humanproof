@@ -167,3 +167,19 @@ def test_one_verification_spread_over_two_server_instances(settings, transcriber
     for app in apps:
         app.state.ctx.store.close()
     assert time.time() > 0
+
+
+def test_master_secret_accepts_base64_or_a_long_random_string():
+    import base64
+
+    from humanproof.keys import master_bytes
+
+    raw = bytes(range(32))
+    assert master_bytes(base64.b64encode(raw).decode()) == raw
+    assert master_bytes("  " + base64.b64encode(raw).decode() + "\n") == raw  # pasted with stray whitespace
+    phrase = "correct-horse-battery-staple-9!x#Q2&z-and-more"
+    assert master_bytes(phrase) == phrase.encode()
+    assert master_bytes("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=") == b"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="  # base64 of only 26 bytes
+    for bad in ("", "short", "dG9vLXNob3J0"):
+        with pytest.raises(RuntimeError, match="too short"):
+            master_bytes(bad)

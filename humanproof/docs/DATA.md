@@ -88,14 +88,14 @@ from held-out people.
 
 | Variable | Value |
 |---|---|
-| `HP_MASTER_SECRET` | 32 random bytes, base64. Every key is derived from it. **Back it up**: without it the stored data cannot be read and issued proofs cannot be checked. |
+| `HP_MASTER_SECRET` | A long random secret: 32 random bytes in base64, or any random string of 32+ characters. Every key is derived from it. **Back it up**: without it the stored data cannot be read and issued proofs cannot be checked. |
 | `HP_DATA_COLLECTION_ENABLED` | `true` |
 | `HP_COLLECTION_KEY` | the tester code, 12+ characters |
 | `HP_DATA_RETENTION_DAYS` | optional, default `365` |
 
-   Generate the secret in PowerShell:
-   `[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))`
-   or anywhere with Python: `python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"`.
+   To generate the secret, open **Git Bash** (installed with Git for Windows; any
+   macOS/Linux terminal works too) and run `openssl rand -base64 32`. A password
+   manager's generator set to 40+ characters is fine as well. Do not make one up.
 
 3. Redeploy. `https://your-app/api/v1/status` (demo mode only) shows
    `storage: postgres` and `collection.active: true`, or the reason it is not active.

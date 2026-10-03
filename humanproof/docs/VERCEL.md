@@ -37,7 +37,7 @@ You set these:
 |---|---|---|
 | `HP_ENV` | `dev` | `prod` |
 | `HP_ALLOW_HEURISTIC_FALLBACK` | `true` | unset |
-| `HP_MASTER_SECRET` | 32 random bytes, base64 (see `docs/DATA.md`) | same, required (or the three separate keys from `python -m tools.genkeys`, which allow rotation) |
+| `HP_MASTER_SECRET` | a long random secret, e.g. `openssl rand -base64 32` (see `docs/DATA.md`) | same, required (or the three separate keys from `python -m tools.genkeys`, which allow rotation) |
 | `DATABASE_URL` | set by Vercel when you attach a Postgres database (Storage → Neon) | same |
 | `HP_DATA_COLLECTION_ENABLED`, `HP_COLLECTION_KEY` | only to store data for training (`docs/DATA.md`) | same |
 | `HP_ASR_MODEL` | unset | required (see below) |
