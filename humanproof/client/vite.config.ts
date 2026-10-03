@@ -4,7 +4,7 @@ import { defineConfig, loadEnv } from "vite";
 // The Content-Security-Policy is generated at build time so connect-src names
 // exactly one API origin. No inline scripts, no remote code, no eval
 // (WebAssembly compilation is the only exception MediaPipe needs).
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
   // Relative base ("/api", the web default) is same-origin: 'self' already covers it.
   const apiBase = env.VITE_API_BASE || "/api";
@@ -16,7 +16,8 @@ export default defineConfig(({ mode }) => {
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",
     "worker-src 'self' blob:",
-    "style-src 'self'",
+    // The dev server injects styles as inline <style> tags; builds ship a stylesheet file.
+    command === "serve" ? "style-src 'self' 'unsafe-inline'" : "style-src 'self'",
     "font-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",

@@ -235,8 +235,12 @@ def score(ch: GazeChallenge, frames: list[GazeFrame], model) -> tuple[float, lis
     except GazeInputError as exc:
         return 0.0, [str(exc)], {}
     h, reasons = heuristic_score(feats)
-    s = h
-    if model is not None:
-        p = float(model.run(feats.vector()[None, :])[1][0][1])
-        s = min(h, p) if h < 0.3 else 0.5 * h + 0.5 * p  # the model cannot override a clear heuristic fail
-    return s, reasons, asdict(feats)
+    return combine(h, feats, model), reasons, asdict(feats)
+
+
+def combine(h: float, feats: GazeFeatures, model) -> float:
+    """Final score from the rule-based score and, when present, the trained model."""
+    if model is None:
+        return h
+    p = float(model.run(feats.vector()[None, :])[1][0][1])
+    return min(h, p) if h < 0.3 else 0.5 * h + 0.5 * p  # the model cannot override a clear heuristic fail

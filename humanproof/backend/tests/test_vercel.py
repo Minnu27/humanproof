@@ -21,6 +21,7 @@ def test_vercel_defaults_only_on_vercel():
     d = vercel_defaults({"VERCEL": "1", "VERCEL_PROJECT_PRODUCTION_URL": "hp.vercel.app"})
     assert d == {
         "HP_API_PREFIX": "/api",
+        "HP_TRUSTED_IP_HEADER": "x-real-ip",
         "HP_PUBLIC_BASE_URL": "https://hp.vercel.app/api",
         "HP_ALLOWED_ORIGINS": '["https://hp.vercel.app"]',
         "HP_RP_ID": "hp.vercel.app",
@@ -44,7 +45,7 @@ def test_entrypoint_serves_under_api_on_vercel(monkeypatch, tmp_path):
     for k, v in {"VERCEL": "1", "VERCEL_PROJECT_PRODUCTION_URL": "hp.vercel.app", "HP_ENV": "dev",
                  "HP_DATA_DIR": str(tmp_path), "HP_ALLOW_HEURISTIC_FALLBACK": "true"}.items():
         monkeypatch.setenv(k, v)
-    for k in ("HP_API_PREFIX", "HP_PUBLIC_BASE_URL", "HP_ALLOWED_ORIGINS", "HP_RP_ID"):
+    for k in ("HP_API_PREFIX", "HP_PUBLIC_BASE_URL", "HP_ALLOWED_ORIGINS", "HP_RP_ID", "HP_TRUSTED_IP_HEADER"):
         monkeypatch.delenv(k, raising=False)
     get_settings.cache_clear()
     try:
@@ -55,7 +56,7 @@ def test_entrypoint_serves_under_api_on_vercel(monkeypatch, tmp_path):
             status = c.get("/api/v1/status").json()
             assert status["models"]["motor"] == "loaded"  # found without relying on the working directory
             r = c.post("/api/v1/sessions", json={"platform": "web", "consent": {
-                "version": "2026-09-v1", "biometric_processing": True, "research_opt_in": False}})
+                "version": "2026-10-v2", "biometric_processing": True, "research_opt_in": False}})
             assert r.status_code == 200
         ctx = mod.app.state.ctx
         assert ctx.issuer == "https://hp.vercel.app/api"
@@ -63,7 +64,7 @@ def test_entrypoint_serves_under_api_on_vercel(monkeypatch, tmp_path):
         assert ctx.settings.allowed_origins == ["https://hp.vercel.app"]
     finally:
         get_settings.cache_clear()
-        for k in ("HP_API_PREFIX", "HP_PUBLIC_BASE_URL", "HP_ALLOWED_ORIGINS", "HP_RP_ID"):
+        for k in ("HP_API_PREFIX", "HP_PUBLIC_BASE_URL", "HP_ALLOWED_ORIGINS", "HP_RP_ID", "HP_TRUSTED_IP_HEADER"):
             monkeypatch.delenv(k, raising=False)
 
 

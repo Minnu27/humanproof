@@ -10,10 +10,12 @@ verified human can still choose to commit fraud.
 | Asset | Why it matters |
 |---|---|
 | Attestation-token signing key (Ed25519) | Whoever holds it can mint "verified human" tokens for anyone. |
-| Key-encryption keys (AES-256) | Protect stored voiceprints and research features. |
+| Key-encryption keys (AES-256) | Protect stored voiceprints and the samples stored for training. With `HP_MASTER_SECRET`, one secret derives these, the signing key and the pairwise secret. |
 | Pairwise secret | Derives per-app pseudonyms; leaking it lets apps link users across services. |
 | Stored voiceprints | Biometric templates; regulated data (BIPA, GDPR Art. 9). |
 | Trained models | Tampering could silently accept bots. |
+| Samples stored for training (optional) | Measurements, and with consent voice clips and face snapshots: biometric data. |
+| Tester code (`HP_COLLECTION_KEY`) | Whoever holds it can add labelled training data. |
 
 ## Attackers and what stops them
 
@@ -33,6 +35,9 @@ verified human can still choose to commit fraud.
 | A12 | **Abuse / enumeration** | Per-client rate limits (keyed hash, not stored IPs), per-client hourly session cap, body-size limits, strict schemas that reject unknown fields and never echo values | `security/http.py`, `schemas.py` |
 | A13 | **Malicious/insecure deployment config** | Production refuses to start without real keys, HTTPS, explicit origins, ASR, and all trained models; heuristic fallback forbidden | `config.validate_for_env`, `context.py` |
 | A14 | **XSS / supply chain in the app** | Strict build-time CSP (no inline script, no remote code, no eval), WASM and models bundled locally with pinned hashes, no CDN | `client/vite.config.ts`, `scripts/fetch-models.mjs` |
+| A15 | **Theft of the stored training samples** | Each sample is encrypted with a key that is not in the database and bound to its own row; rows carry no session ID, name or IP; retention limit; nothing is stored without opt-in; storage refuses to start without a persistent key | `collection.py`, `storage.py` |
+| A16 | **Poisoning the training data** (teach the model that an attack is human) | Only sessions labelled through the private tester code train models; ordinary users' data never does; the code is compared in constant time and guesses are rate-limited and audited; a retrained model is adopted only if it beats the current one on held-out participants with no measure clearly worse, and only through a reviewed pull request | `api._plan_capture`, `ml/retrain.py`, `.github/workflows/retrain.yml` |
+| A17 | **Using tester mode to obtain a proof** | Tester sessions report a verdict but never issue a token or create a subject | `api.finalize` |
 
 ## Known limits (be honest with customers about these)
 
@@ -45,8 +50,16 @@ verified human can still choose to commit fraud.
 * **Detection models age.** New voice-cloning and face-swap generators appear
   constantly. Re-train on fresh attack data on a schedule and track the
   cross-dataset metrics in `docs/MODELS.md`, not the in-dataset ones.
-* **In-memory state.** Rate limits and pending passkey challenges live in one
-  process. Run one API worker, or move them to Redis before scaling out.
+* **In-memory rate limits.** Per-minute rate limits live in one process (sessions,
+  passkey challenges and the hourly attempt cap are in the database). Behind
+  several instances the effective per-minute limit is multiplied; move it to Redis
+  before relying on it at scale.
+* **A dishonest tester can poison training.** Anyone with the tester code can
+  label sessions. The adoption rule and pull-request review limit the damage; they
+  do not remove it. Keep the code private and rotate it.
+* **Exports are plaintext.** `ml/dataset/export.py` writes decrypted biometric data
+  to disk for training. Whoever can run it holds the master secret; treat both
+  accordingly.
 * **Certification is external.** Liveness claims to banks need an accredited
   ISO/IEC 30107-3 presentation-attack-detection test (e.g. iBeta), plus a
   penetration test. This repository prepares for those; it does not replace them.

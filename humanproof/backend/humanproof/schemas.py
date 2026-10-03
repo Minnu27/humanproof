@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONSENT_VERSION = "2026-09-v1"
+CONSENT_VERSION = "2026-10-v2"
 
 Unit = Annotated[float, Field(ge=-2.0, le=2.0)]
 Ms = Annotated[float, Field(ge=0, le=30_000)]
@@ -22,9 +22,32 @@ class Viewport(Strict):
 
 
 class Consent(Strict):
-    version: Literal["2026-09-v1"]
+    version: Literal["2026-10-v2"]
     biometric_processing: Literal[True]
+    # Optional, separately ticked: keep this attempt's measurements (numbers only).
     research_opt_in: bool = False
+    # Optional, separately ticked: also keep the voice recording and face snapshots.
+    media_opt_in: bool = False
+
+
+AttackType = Literal[
+    "replay_video", "photo", "face_swap", "synthetic_face", "tts_voice", "voice_clone",
+    "audio_replay", "bot_pointer", "scripted_client", "other",
+]
+
+
+class CollectionRequest(Strict):
+    """A trusted tester recording a labelled session (see collection.py)."""
+    code: str = Field(min_length=1, max_length=200)
+    participant: str = Field(pattern=r"^[A-Za-z0-9_\-]{1,40}$")  # a pseudonym, e.g. "p07"; not a name
+    label: Literal["human", "attack"]
+    attack_type: AttackType | None = None
+
+    @model_validator(mode="after")
+    def _attack_needs_type(self):
+        if (self.label == "attack") != (self.attack_type is not None):
+            raise ValueError("attack_type is required for attack sessions and only for them")
+        return self
 
 
 class Attestation(Strict):
@@ -39,6 +62,7 @@ class CreateSessionRequest(Strict):
     # The app asking for proof (e.g. "bank.example"). Tokens are scoped to it and
     # carry a pairwise pseudonym, so different apps cannot link the same person.
     relying_party: str = Field(default="humanproof", pattern=r"^[a-z0-9.\-]{1,120}$")
+    collection: CollectionRequest | None = None
 
 
 class CreateSessionResponse(BaseModel):
@@ -47,6 +71,10 @@ class CreateSessionResponse(BaseModel):
     steps: list[str]
     assurance: str
     attestation_challenge: str
+    # What will be kept from this attempt, and the code that deletes it again.
+    storing: Literal["nothing", "measurements", "measurements_and_media"] = "nothing"
+    data_receipt: str | None = None
+    labelled: bool = False
 
 
 class StartResponse(BaseModel):
@@ -124,3 +152,4 @@ class Decision(BaseModel):
     # Per-checkpoint measurements behind the scores. Never sent in production:
     # it would tell an attacker exactly which signal to improve.
     debug: dict | None = None
+    data_stored: bool = False

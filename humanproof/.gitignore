@@ -19,3 +19,6 @@ client/android/app/build/
 # Vercel / local virtualenvs
 .vercel/
 .venv/
+
+# Decrypted training exports (ml/dataset/export.py): never commit
+hp-export/

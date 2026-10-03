@@ -138,11 +138,37 @@ def make_model():
     )
 
 
-def fit(X_h, X_b):
+def fit(X_h, X_b, w_h=None, w_b=None):
+    """Class-balanced fit. ``w_h`` / ``w_b`` optionally weight windows within a class
+    (ml/retrain.py uses this so a few hundred collected sessions are not drowned out
+    by tens of thousands of public windows)."""
     X = np.vstack([X_h, X_b])
     y = np.concatenate([np.ones(len(X_h)), np.zeros(len(X_b))])  # 1 = human
-    w = np.where(y == 1, len(y) / (2 * len(X_h)), len(y) / (2 * len(X_b)))
+    w_h = np.ones(len(X_h)) if w_h is None else np.asarray(w_h, dtype=float)
+    w_b = np.ones(len(X_b)) if w_b is None else np.asarray(w_b, dtype=float)
+    w = np.concatenate([w_h / w_h.sum(), w_b / w_b.sum()]) * len(y) / 2
     return make_model().fit(X, y, sample_weight=w), X
+
+
+def export_model(model, probe: np.ndarray, out: Path, metrics: dict, threshold: float) -> Path:
+    """Write motor.onnx (checked against the sklearn model), its metrics and manifest entry."""
+    import onnxruntime as ort
+    from skl2onnx import to_onnx
+
+    out.mkdir(parents=True, exist_ok=True)
+    probe = probe[:500].astype(np.float32)
+    onx = to_onnx(model, probe[:1], options={id(model): {"zipmap": False}}, target_opset=17)
+    sess = ort.InferenceSession(onx.SerializeToString(), providers=["CPUExecutionProvider"])
+    diff = float(np.abs(sess.run(None, {sess.get_inputs()[0].name: probe})[1][:, 1]
+                        - model.predict_proba(probe)[:, 1]).max())
+    if diff >= 1e-4:
+        raise RuntimeError(f"ONNX parity failed: {diff}")
+    metrics["onnx_parity_max_abs_diff"] = diff
+    path = out / "motor.onnx"
+    path.write_bytes(onx.SerializeToString())
+    (out / "motor.metrics.json").write_text(json.dumps(metrics, indent=2))
+    update_manifest(out, "motor", path, {"threshold": threshold, "human_class": 1, "feature_names": FEATURE_NAMES})
+    return path
 
 
 def main():
@@ -221,23 +247,8 @@ def main():
         metrics["ood_balabit_human_accept_rate"] = round(float(np.mean(np.asarray(bal) >= threshold)), 4)
 
     print(json.dumps(metrics, indent=2))
-    args.out.mkdir(parents=True, exist_ok=True)
-    import onnxruntime as ort
-    from skl2onnx import to_onnx
-
-    onx = to_onnx(model, X[:1].astype(np.float32), options={id(model): {"zipmap": False}}, target_opset=17)
-    sess = ort.InferenceSession(onx.SerializeToString(), providers=["CPUExecutionProvider"])
-    probe = Xt[:500].astype(np.float32)
-    diff = float(np.abs(sess.run(None, {sess.get_inputs()[0].name: probe})[1][:, 1]
-                        - model.predict_proba(probe)[:, 1]).max())
-    assert diff < 1e-4, f"ONNX parity failed: {diff}"
-    metrics["onnx_parity_max_abs_diff"] = diff
-    path = args.out / "motor.onnx"
-    path.write_bytes(onx.SerializeToString())
-    (args.out / "motor.metrics.json").write_text(json.dumps(metrics, indent=2))
-    update_manifest(args.out, "motor", path, {"threshold": threshold, "human_class": 1,
-                                              "feature_names": FEATURE_NAMES})
-    print(f"Wrote {path} (ONNX parity {diff:.1e})")
+    path = export_model(model, Xt, args.out, metrics, threshold)
+    print(f"Wrote {path} (ONNX parity {metrics['onnx_parity_max_abs_diff']:.1e})")
 
 
 if __name__ == "__main__":

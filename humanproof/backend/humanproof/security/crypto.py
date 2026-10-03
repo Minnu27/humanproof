@@ -165,6 +165,30 @@ class SigningKeySet:
         return cls(keys)
 
 
+def keys_from_master(master: bytes) -> tuple[KeyRing, SigningKeySet, bytes]:
+    """Derive the encryption key, the token signing key and the pairwise secret
+    from one master secret (HKDF-SHA256, a distinct label each).
+
+    Every server instance given the same master secret gets identical keys, which
+    is what a multi-instance deployment needs. The trade-off is rotation: changing
+    the master changes everything at once, so long-lived deployments should set
+    the keys individually (the key ring accepts old keys for decryption).
+    """
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    if len(master) < 32:
+        raise CryptoError("master secret must be at least 32 bytes")
+
+    def derive(label: bytes) -> bytes:
+        return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=label).derive(master)
+
+    kid = "m" + hashlib.sha256(b"hp/kid/v1" + master).hexdigest()[:8]
+    ring = KeyRing([Kek(kid, derive(b"hp/kek/v1"))])
+    signing = SigningKeySet([SigningKey(kid, Ed25519PrivateKey.from_private_bytes(derive(b"hp/signing/v1")))])
+    return ring, signing, derive(b"hp/pairwise/v1")
+
+
 # ---------------------------------------------------------------------------
 # Dev key material (never used in prod: config validation requires real keys)
 # ---------------------------------------------------------------------------

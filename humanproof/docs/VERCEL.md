@@ -37,30 +37,33 @@ You set these:
 |---|---|---|
 | `HP_ENV` | `dev` | `prod` |
 | `HP_ALLOW_HEURISTIC_FALLBACK` | `true` | unset |
-| `HP_KEK_KEYRING`, `HP_SIGNING_KEYS`, `HP_PAIRWISE_SECRET` | from `python -m tools.genkeys --out ./secrets` (use the `b64:` form of the signing key) | same, required |
+| `HP_MASTER_SECRET` | a long random secret, e.g. `openssl rand -base64 32` (see `docs/DATA.md`) | same, required (or the three separate keys from `python -m tools.genkeys`, which allow rotation) |
+| `DATABASE_URL` | set by Vercel when you attach a Postgres database (Storage → Neon) | same |
+| `HP_DATA_COLLECTION_ENABLED`, `HP_COLLECTION_KEY` | only to store data for training (`docs/DATA.md`) | same |
 | `HP_ASR_MODEL` | unset | required (see below) |
 
-Set the three key variables even for a demo. Without them each server instance
-generates its own keys, so a token signed by one instance fails verification on another.
+Set `HP_MASTER_SECRET` even for a demo. Without it each server instance generates
+its own keys, so a token signed by one instance fails verification on another.
+
+Also set automatically on Vercel: `HP_TRUSTED_IP_HEADER=x-real-ip`. Vercel's edge
+sets that header itself, so each visitor gets their own rate limit and hourly
+attempt allowance instead of everyone sharing the proxy's address.
 
 ## Limits of this deployment
 
-* **Session storage is per instance.** Sessions, rate limits and pending passkey
-  challenges live in SQLite under `/tmp` and in memory. Vercel can run several
-  instances, and a verification that starts on one and continues on another fails
-  with "Session not found". A quiet demo usually stays on one instance; real
-  traffic needs a shared database (Postgres) and Redis first.
-* **Nothing persists.** `/tmp` is wiped when an instance is recycled, so stored
-  voice signatures, passkeys and the audit log are lost. Do not onboard real users.
+* **Attach a database.** Without one, sessions live in SQLite under `/tmp` on a
+  single instance: a verification that starts on one instance and continues on
+  another fails with "Session not found", and everything is lost when the instance
+  is recycled. With Postgres attached, sessions, passkeys, the audit log and
+  stored samples are shared by all instances and persist.
+* **Rate limits are still per instance** (in memory). The hourly cap on attempts
+  per visitor is in the database and does hold across instances.
 * **Production mode needs more than Vercel gives by default.** It requires the
   trained voice and face models in `backend/models/` and speech recognition
   (`requirements-asr.txt`, kept out of the default install to stay well under the
   500 MB Python bundle limit; the Whisper model must also be bundled, because the
   filesystem is read-only apart from `/tmp`).
 * **Request size:** Vercel caps bodies at 4.5 MB; the API's own cap is 2.5 MB.
-
-For a production service, run the backend from `backend/Dockerfile` on a host with
-a persistent disk or database, and keep Vercel for the web app.
 
 ## Local check
 

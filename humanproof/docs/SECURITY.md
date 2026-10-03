@@ -32,7 +32,9 @@ the automated test that checks the control; all run in CI (`.github/workflows`).
 | V6.4 | Key management | Keys outside DB; key IDs and rotation; prod refuses dev keys | `test_key_rotation`, `test_prod_refuses_insecure_config` |
 | V7.1 | Logging without sensitive data | Audit log stores truncated session IDs, scores, decisions; no biometrics, no IPs | `storage.audit` |
 | V7.3 | Log integrity | HMAC hash chain | `test_audit_chain_detects_tampering` |
-| V8.1–8.3 | Data protection | No raw video/audio stored; voiceprints encrypted; `Cache-Control: no-store` | `test_full_flow_human_passes_and_token_verifies` |
+| V8.1–8.3 | Data protection | No raw video stored; audio and face snapshots stored only with separate opt-in (or in tester sessions), encrypted per row, expiring, deletable by receipt; voiceprints encrypted; `Cache-Control: no-store` | `test_nothing_is_stored_without_opt_in`, `test_sample_cannot_be_decrypted_as_another_row`, `test_person_can_delete_their_data_with_the_receipt`, `test_samples_expire` |
+| V8.3 | Sensitive data not retained longer than needed | Retention limit on samples; abandoned attempts purged; passkey deletion removes samples | `test_abandoned_attempts_are_not_kept`, `test_passkey_bind_reverify_and_delete` |
+| V1.14 / V4.2 | State shared safely between instances | Sessions, passkey challenges and audit log in Postgres; session updates are compare-and-swap; audit chain serialised by an advisory lock | `test_storage.py` |
 | V9.1 | TLS | Prod requires https base URL; HSTS preload header; Caddy auto-TLS | `test_prod_refuses_insecure_config` |
 | V10.3 | Integrity of code/artefacts | Model SHA-256 manifest; client model SHA-256 lock; pinned deps | `test_tampered_model_refused` |
 | V11.1 | Business-logic limits | Submission time windows; per-client hourly cap | `test_submission_too_fast_is_burned`, `test_rate_limit` |
@@ -45,11 +47,18 @@ the automated test that checks the control; all run in CI (`.github/workflows`).
 
 ## Operating it safely
 
-* Generate keys with `python -m tools.genkeys` and keep them in a secret
-  manager or KMS/HSM. Never commit `.env` or `secrets/`.
-* Rotate: add the new key first in `HP_KEK_KEYRING` / `HP_SIGNING_KEYS`, keep
-  the old one after it until tokens and ciphertexts using it have expired.
-* Run a single API worker (or add Redis for rate limits and passkey challenges).
+* Keys: either one `HP_MASTER_SECRET` (encryption, signing and pairwise keys are
+  derived from it; simplest, but it cannot be rotated piecemeal), or separate keys
+  from `python -m tools.genkeys`. Keep them in a secret manager or KMS/HSM and back
+  them up: stored samples and voiceprints are unreadable without the encryption key.
+  Never commit `.env` or `secrets/`.
+* Rotate (separate keys): add the new key first in `HP_KEK_KEYRING` /
+  `HP_SIGNING_KEYS`, keep the old one after it until tokens and ciphertexts using
+  it have expired.
+* Use Postgres (`HP_DATABASE_URL`) whenever more than one instance runs. Per-minute
+  rate limits are still per process; add Redis before relying on them at scale.
+* Training data: keep `HP_COLLECTION_KEY` private and rotate it when a tester
+  leaves; treat every dataset export as plaintext biometric data (`docs/DATA.md`).
 * Before selling to regulated customers: accredited PAD test (ISO/IEC 30107-3),
   external penetration test, and SOC 2 Type II for the operation around it.
 

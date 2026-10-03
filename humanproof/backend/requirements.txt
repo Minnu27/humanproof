@@ -13,3 +13,5 @@ httpx==0.28.1
 numpy==2.4.4
 onnxruntime==1.25.0
 pillow==12.3.0
+# Postgres (used when HP_DATABASE_URL / DATABASE_URL is set; SQLite otherwise)
+psycopg[binary,pool]==3.3.6
