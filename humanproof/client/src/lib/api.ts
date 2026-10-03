@@ -10,9 +10,35 @@ import { deviceBindingHeaders, type Platform } from "./platform";
 // e.g. https://humanproof.example/api.
 export const API_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) || "/api").replace(/\/$/, "");
 export const RELYING_PARTY = (import.meta.env.VITE_RELYING_PARTY as string | undefined) ?? "humanproof";
-export const CONSENT_VERSION = "2026-09-v1";
+export const CONSENT_VERSION = "2026-10-v2";
 
 export type Checkpoint = "gaze" | "motor" | "voice";
+
+export type AttackType =
+  | "replay_video"
+  | "photo"
+  | "face_swap"
+  | "synthetic_face"
+  | "tts_voice"
+  | "voice_clone"
+  | "audio_replay"
+  | "bot_pointer"
+  | "scripted_client"
+  | "other";
+
+/** What the person agreed to have kept beyond the check itself. Both are optional. */
+export interface SharingChoice {
+  measurements: boolean;
+  recordings: boolean;
+}
+
+/** A trusted tester recording a session with a known answer (see docs/DATA.md). */
+export interface TesterLabel {
+  code: string;
+  participant: string;
+  label: "human" | "attack";
+  attack_type?: AttackType;
+}
 
 export interface Session {
   session_id: string;
@@ -20,6 +46,11 @@ export interface Session {
   steps: Checkpoint[];
   assurance: "web" | "device_attested";
   attestation_challenge: string;
+  // What the server will actually keep from this attempt (it may be less than was
+  // offered, e.g. when storage is switched off), and the receipt that deletes it.
+  storing: "nothing" | "measurements" | "measurements_and_media";
+  data_receipt: string | null;
+  labelled: boolean;
 }
 
 export interface GazeKeyframe {
@@ -62,6 +93,7 @@ export interface Decision {
   subject_hint: string | null;
   // Present on demo (non-production) servers only: the measurements behind each score.
   debug?: Record<string, { score?: number; reasons?: string[]; features?: unknown; info?: unknown }> | null;
+  data_stored: boolean;
 }
 
 export class ApiError extends Error {
@@ -95,15 +127,43 @@ async function request<T>(path: string, body?: string, headers: Record<string, s
   return (await res.json()) as T;
 }
 
-export function createSession(platform: Platform, researchOptIn: boolean): Promise<Session> {
+export function createSession(platform: Platform, sharing: SharingChoice, tester?: TesterLabel): Promise<Session> {
   return request<Session>(
     "/v1/sessions",
     JSON.stringify({
       platform,
       relying_party: RELYING_PARTY,
-      consent: { version: CONSENT_VERSION, biometric_processing: true, research_opt_in: researchOptIn },
+      consent: {
+        version: CONSENT_VERSION,
+        biometric_processing: true,
+        research_opt_in: sharing.measurements,
+        media_opt_in: sharing.recordings,
+      },
+      ...(tester ? { collection: tester } : {}),
     }),
   );
+}
+
+export interface DataPolicy {
+  sharing: boolean; // the server can store data that people choose to share
+  tester_mode: boolean; // labelled tester sessions are enabled
+  retention_days: number;
+}
+
+/** What this server is able to keep. Unknown or unreachable means "offer nothing". */
+export async function getDataPolicy(): Promise<DataPolicy> {
+  try {
+    const res = await fetch(`${API_BASE}/v1/data/policy`, { credentials: "omit", cache: "no-store" });
+    if (res.ok) return (await res.json()) as DataPolicy;
+  } catch {
+    /* fall through */
+  }
+  return { sharing: false, tester_mode: false, retention_days: 0 };
+}
+
+/** Deletes everything stored from one attempt. The receipt is the only key to it. */
+export function deleteStoredData(receipt: string): Promise<{ deleted: number }> {
+  return request("/v1/data/delete", JSON.stringify({ receipt }));
 }
 
 export function attest(sessionId: string, payload: object): Promise<{ assurance: string }> {

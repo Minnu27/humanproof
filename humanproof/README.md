@@ -22,9 +22,10 @@ same person, so apps cannot track users across services.
 ```
 client/   React app → web, desktop (Tauri: Windows/macOS/Linux), mobile (Capacitor: iOS/Android)
 backend/  FastAPI service: challenges, scoring, fusion, encryption, attestation, tokens
-ml/       Training pipelines: motor (CPU), voice + face (GPU, Colab notebook included)
+ml/       Training pipelines: motor (CPU), voice + face (GPU, Colab notebook included),
+          dataset export and retraining from the sessions the app collects
 sdk/      Token verification for relying parties (Python, Node.js)
-docs/     Threat model, security controls (OWASP ASVS map), privacy, models, releasing
+docs/     Threat model, security controls (OWASP ASVS map), privacy, models, data collection, releasing
 ```
 
 ## Run it locally (about 5 minutes)
@@ -50,10 +51,19 @@ The first `npm run dev` pins the face-tracking model's SHA-256 in
 Desktop app during development: `npm run desktop:dev`. Phones: `npm run cap:sync`,
 then open `client/android` in Android Studio or `client/ios/App` in Xcode.
 
+## Learning from real sessions
+
+With a Postgres database attached and storage switched on, the service keeps the
+attempts people agree to share, encrypted. Trusted testers record sessions with a
+known answer (`/?collect=1`: real person, or a specific attack); those labelled
+sessions retrain the eye and movement models every week, and a new model reaches
+production only through a pull request that shows it beat the current one on
+people it never saw. Setup, what is stored and the limits are in `docs/DATA.md`.
+
 ## Tests and checks
 
 ```bash
-cd backend && pytest --cov=humanproof      # 82 tests, ~90% coverage
+cd backend && pytest --cov=humanproof      # ~130 tests; HP_TEST_DATABASE_URL=postgres://... runs them on Postgres
 HP_IITKGP_DATA=/path/to/Mouse-Dynamics pytest -k real_held_out   # motor model on real unseen people
 bandit -r humanproof tools && pip-audit -r requirements.txt
 cd ../client && npm run typecheck && npm run build && npm audit
@@ -68,7 +78,8 @@ version tag builds installers for Windows, macOS, Linux, Android and iOS.
 
 1. **Train the GPU models:** open `ml/colab_train.ipynb` in Colab Pro (see
    `docs/MODELS.md` for datasets, licences and what numbers to expect).
-2. **Generate keys:** `python -m tools.genkeys --out ./secrets`; fill `.env` from
+2. **Generate keys:** set `HP_MASTER_SECRET` (one secret, everything derived from it), or
+   `python -m tools.genkeys --out ./secrets` for separately rotatable keys; fill `.env` from
    `backend/.env.example`. Production refuses to start with dev keys, HTTP, wildcard
    origins, missing models, or missing speech recognition.
 3. **Deploy:** `docker compose up -d` in `backend/` (API behind Caddy with automatic HTTPS),

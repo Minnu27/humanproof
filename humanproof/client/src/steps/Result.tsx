@@ -3,6 +3,7 @@ import type { Ctx } from "../App";
 import * as api from "../lib/api";
 import { getCapture } from "../lib/diagnostics";
 import { bindPasskey, passkeysSupported } from "../lib/passkey";
+import { ATTACK_TYPES } from "./Consent";
 
 interface Props {
   decision: api.Decision;
@@ -16,7 +17,24 @@ export function Result({ decision, ctx, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
   const [passkey, setPasskey] = useState<"idle" | "busy" | "done" | "failed">("idle");
   const [diag, setDiag] = useState<"idle" | "copied" | "failed">("idle");
+  const [stored, setStored] = useState<"kept" | "busy" | "deleted" | "failed">("kept");
   const pass = decision.decision === "pass";
+  const tester = ctx.tester;
+  // For a tester deliberately attacking the check, a rejection is the good outcome.
+  const attackTest = tester?.label === "attack";
+  const good = attackTest ? !pass : pass;
+  const receipt = decision.data_stored ? ctx.session.data_receipt : null;
+
+  const deleteStored = async () => {
+    if (!receipt) return;
+    setStored("busy");
+    try {
+      await api.deleteStoredData(receipt);
+      setStored("deleted");
+    } catch {
+      setStored("failed");
+    }
+  };
   const round3 = (_: string, v: unknown) => (typeof v === "number" ? Math.round(v * 1000) / 1000 : v);
 
   const copyDiagnostics = async () => {
@@ -61,15 +79,27 @@ export function Result({ decision, ctx, onRetry }: Props) {
 
   return (
     <section className="card">
-      <div className={`badge ${pass ? "badge--ok" : decision.decision === "step_up" ? "badge--warn" : "badge--bad"}`}>
-        {pass ? "Verified human" : decision.decision === "step_up" ? "Almost there" : "Not verified"}
+      <div className={`badge ${good ? "badge--ok" : decision.decision === "step_up" ? "badge--warn" : "badge--bad"}`}>
+        {attackTest
+          ? pass
+            ? "Attack got through"
+            : "Attack blocked"
+          : pass
+            ? "Verified human"
+            : decision.decision === "step_up"
+              ? "Almost there"
+              : "Not verified"}
       </div>
       <h1>
-        {pass
-          ? "You're verified"
-          : decision.decision === "step_up"
-            ? "We need one more try"
-            : "We couldn't verify you this time"}
+        {attackTest
+          ? pass
+            ? "This attack was not caught"
+            : "This attack was caught"
+          : pass
+            ? "You're verified"
+            : decision.decision === "step_up"
+              ? "We need one more try"
+              : "We couldn't verify you this time"}
       </h1>
       <ul className="scores" aria-label="Checkpoint results">
         {Object.entries(decision.checkpoints).map(([k, v]) => (
@@ -80,7 +110,30 @@ export function Result({ decision, ctx, onRetry }: Props) {
         ))}
       </ul>
 
-      {pass ? (
+      {tester ? (
+        <>
+          <p>
+            Recorded as{" "}
+            <strong>
+              {tester.label === "human"
+                ? "a real person"
+                : `an attack: ${ATTACK_TYPES.find((a) => a.value === tester.attack_type)?.label ?? tester.attack_type}`}
+            </strong>{" "}
+            for participant <strong>{tester.participant}</strong>. The scores above are what an ordinary user would
+            have got; tester sessions never issue a proof token.
+          </p>
+          {decision.reasons.length > 0 && (
+            <ul className="reasons" aria-label="What the check noticed">
+              {decision.reasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          )}
+          <button className="btn btn--primary" onClick={onRetry}>
+            Record another session
+          </button>
+        </>
+      ) : pass ? (
         <>
           <p className="muted">
             Assurance: {decision.assurance === "device_attested" ? "verified device" : "browser"}. Your proof is valid
@@ -123,6 +176,35 @@ export function Result({ decision, ctx, onRetry }: Props) {
             Try again
           </button>
         </>
+      )}
+      {receipt && (
+        <div className="stored" aria-live="polite">
+          {stored === "deleted" ? (
+            <p className="ok">Deleted. Nothing from this attempt is stored any more.</p>
+          ) : (
+            <>
+              <h2>Data kept from this attempt</h2>
+              <p className="muted">
+                {ctx.session.storing === "measurements_and_media"
+                  ? "The measurements, your voice recording and the face snapshots"
+                  : "The measurements (numbers only, no audio or images)"}{" "}
+                are stored encrypted for up to {ctx.retentionDays} days. This receipt is the only way to delete them
+                later, so keep it if you might want to:
+              </p>
+              <code className="receipt">{receipt}</code>
+              <div className="row">
+                <button className="btn" onClick={deleteStored} disabled={stored === "busy"}>
+                  {stored === "busy" ? "Deleting…" : "Delete my data from this attempt"}
+                </button>
+              </div>
+              {stored === "failed" && (
+                <p className="muted" role="alert">
+                  The data could not be deleted just now. Try again in a moment.
+                </p>
+              )}
+            </>
+          )}
+        </div>
       )}
       {decision.debug && (
         <details className="diag">

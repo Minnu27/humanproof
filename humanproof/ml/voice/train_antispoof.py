@@ -8,7 +8,8 @@ Data (any combination; labels come from each dataset's protocol file):
   --asvspoof2019-la /data/LA      ASVspoof 2019 Logical Access (TTS + voice conversion)
   --asvspoof2019-pa /data/PA      ASVspoof 2019 Physical Access (replay)
   --in-the-wild /data/itw         "In-the-Wild" real-world deepfakes (strongly recommended for eval)
-  --csv extra.csv                 your own data: columns path,label (label: bonafide|spoof)
+  --csv extra.csv                 your own data: columns path,label[,split] (label: bonafide|spoof);
+                                  voice.csv from ml/dataset/export.py (sessions collected by the app) fits
 
 Robustness: RawBoost-style channel augmentation (random filtering, noise, gain,
 clipping) so the model survives phone microphones and codecs.
@@ -68,9 +69,13 @@ def in_the_wild_items(root: Path) -> list[tuple[Path, int]]:
     return out
 
 
-def csv_items(path: Path) -> list[tuple[Path, int]]:
+def csv_items(path: Path) -> dict[str, list[tuple[Path, int]]]:
+    """Rows grouped by their optional ``split`` column (train / val / test; "" if absent)."""
+    groups: dict[str, list[tuple[Path, int]]] = {}
     with open(path) as fh:
-        return [(Path(r["path"]), 1 if r["label"] == "bonafide" else 0) for r in csv.DictReader(fh)]
+        for r in csv.DictReader(fh):
+            groups.setdefault(r.get("split") or "", []).append((Path(r["path"]), 1 if r["label"] == "bonafide" else 0))
+    return groups
 
 
 def load_audio(path: Path) -> np.ndarray:
@@ -255,11 +260,20 @@ def main():
             dev += asvspoof_items(root, kind, "dev")
             evals[f"asvspoof2019_{kind.lower()}_eval"] = asvspoof_items(root, kind, "eval")
     for c in args.csv:
-        items = csv_items(c)
-        random.Random(0).shuffle(items)
-        k = int(0.9 * len(items))
-        train += items[:k]
-        dev += items[k:]
+        groups = csv_items(c)
+        if set(groups) - {""}:
+            # The file says who is held out (ml/dataset/export.py splits by person, so
+            # the same voice never appears in both training and test data).
+            train += groups.get("train", []) + groups.get("", [])
+            dev += groups.get("val", [])
+            if len({y for _, y in groups.get("test", [])}) == 2:  # an error rate needs both classes
+                evals[f"{c.stem}_test"] = groups["test"]
+        else:
+            items = groups.get("", [])
+            random.Random(0).shuffle(items)
+            k = int(0.9 * len(items))
+            train += items[:k]
+            dev += items[k:]
     if args.in_the_wild:
         evals["in_the_wild"] = in_the_wild_items(args.in_the_wild)  # held out entirely: real-world test
     if not train:

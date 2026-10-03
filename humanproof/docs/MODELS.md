@@ -44,10 +44,9 @@ pixels) in the shared feature code so the model cannot learn what device
 recorded the data. Perfect scores in this field usually mean leakage.
 
 **Known gaps:** training humans moved a mouse freely; they did not trace our
-curve, and none used touch. Turn on consented data collection
-(`HP_DATA_COLLECTION_ENABLED=true`), export with
-`backend/tools/export_research.py`, and retrain before relying on the motor
-checkpoint alone. Touch input is scored with extra caution in the meantime.
+curve, and none used touch. Collect labelled tracing sessions with the app's
+tester mode and let `ml/retrain.py` fold them in (`docs/DATA.md`) before relying on
+the motor checkpoint alone. Touch input is scored with extra caution in the meantime.
 
 ## Eye check (rules, no trained model yet)
 
@@ -80,11 +79,13 @@ reached 0.5 about 9% of the time. Both are fixed by the design above. The
 earlier tests missed this because the simulated "human" was far cleaner than a
 webcam and the only simulated attack was a drifting video.
 
-**To calibrate on real people:** in demo mode the result screen has a
-"Copy diagnostics" button that copies the attempt's raw eye, pointer and mouth
-measurements (numbers only) with the server's scores. Collect these from
-consenting testers, re-run `gaze.score` on them, and adjust the thresholds in
-`heuristic_score`.
+**To calibrate on real people:** record labelled tester sessions (`docs/DATA.md`).
+`ml/retrain.py` then reports, on real recordings, how many real people the check
+accepts and how many replays into the wrong session it rejects, with the evidence
+percentiles needed to move the thresholds in `heuristic_score`; with enough data
+it trains `gaze.onnx` over the same features and proposes it if it is better. For
+a single attempt, the demo result screen's "Copy diagnostics" button still copies
+that attempt's raw numbers.
 
 ## Voice anti-spoofing (you run this)
 
@@ -102,6 +103,19 @@ Crops come from the same MediaPipe landmarker the app uses (25% margin, square,
 224 px, JPEG q85). Splits are by identity. Train on FaceForensics++ c23 and use
 `--cross-test celebdf` to hold Celeb-DF out: in-dataset video AUC is typically
 0.95+, cross-dataset commonly 0.65–0.80. The cross-dataset number is the honest one.
+
+## Retraining on your own collected data
+
+`ml/dataset/export.py` turns the stored, labelled sessions into a dataset split by
+participant; `ml/retrain.py` retrains the eye and movement models and adopts a
+candidate only when it beats the current model on held-out participants without
+making any measure clearly worse; `.github/workflows/retrain.yml` runs both weekly
+and opens a pull request when a model changed. The voice and face scripts take the
+same export (`train_antispoof.py --csv voice.csv`, `train_face.py --extra faces/`).
+Details, thresholds and limits are in `docs/DATA.md`.
+
+Your own consented collection is also the data you hold commercial rights to,
+which the public research datasets below do not give you.
 
 ## Licences
 

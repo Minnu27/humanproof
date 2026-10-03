@@ -4,7 +4,7 @@ import { attestDevice, detectPlatform, type Platform } from "./lib/platform";
 import { loadFaceLandmarker, openCamera } from "./lib/face";
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { Welcome } from "./steps/Welcome";
-import { Consent } from "./steps/Consent";
+import { Consent, type TesterForm } from "./steps/Consent";
 import { CameraCheck } from "./steps/CameraCheck";
 import { GazeStep } from "./steps/GazeStep";
 import { MotorStep } from "./steps/MotorStep";
@@ -19,7 +19,12 @@ export interface Ctx {
   attested: boolean;
   video: HTMLVideoElement;
   landmarker: FaceLandmarker;
+  tester?: api.TesterLabel; // set when this attempt is a labelled tester session
+  retentionDays: number;
 }
+
+// Tester mode is opened with ?collect=1. It still needs the private code to do anything.
+const TESTER_MODE = new URLSearchParams(window.location.search).get("collect") === "1";
 
 const STEP_LABELS: Record<string, string> = { gaze: "Eyes", motor: "Movement", voice: "Voice" };
 
@@ -32,6 +37,19 @@ export default function App() {
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const platform = useRef<Platform>(detectPlatform()).current;
+  const [policy, setPolicy] = useState<api.DataPolicy>({ sharing: false, tester_mode: false, retention_days: 0 });
+  // Kept for the life of the page (never written to storage) so a tester can record several sessions in a row.
+  const [tester, setTester] = useState<TesterForm | null>(
+    TESTER_MODE ? { code: "", participant: "", label: "human", attackType: "replay_video" } : null,
+  );
+
+  useEffect(() => {
+    let live = true;
+    void api.getDataPolicy().then((p) => live && setPolicy(p));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -52,15 +70,28 @@ export default function App() {
     setStage("error");
   };
 
-  const begin = async (researchOptIn: boolean) => {
+  const begin = async (sharing: api.SharingChoice, label?: api.TesterLabel) => {
     setBusy(true);
     try {
-      const [stream, landmarker] = await Promise.all([openCamera(), loadFaceLandmarker()]);
-      streamRef.current = stream;
+      const openMedia = async () => {
+        const [stream, landmarker] = await Promise.all([openCamera(), loadFaceLandmarker()]);
+        streamRef.current = stream;
+        return landmarker;
+      };
+      let session: api.Session;
+      let landmarker: FaceLandmarker;
+      if (label) {
+        // Tester mode: check the code before asking for the camera.
+        session = await api.createSession(platform, sharing, label);
+        landmarker = await openMedia();
+      } else {
+        // Normal use: a refused camera prompt should not use up an attempt.
+        landmarker = await openMedia();
+        session = await api.createSession(platform, sharing);
+      }
       const video = videoRef.current!;
-      video.srcObject = stream;
+      video.srcObject = streamRef.current;
       await video.play();
-      const session = await api.createSession(platform, researchOptIn);
       let attested = false;
       const att = await attestDevice(platform, session.attestation_challenge);
       if (att) {
@@ -70,7 +101,7 @@ export default function App() {
           attested = false;
         }
       }
-      ctxRef.current = { platform, session, attested, video, landmarker };
+      ctxRef.current = { platform, session, attested, video, landmarker, tester: label, retentionDays: policy.retention_days };
       setStage("camera");
     } catch (e) {
       fail(e);
@@ -111,6 +142,7 @@ export default function App() {
         <header className="brand">
           <img src="/icon.svg" alt="" width={28} height={28} />
           <span>HumanProof</span>
+          {tester && <span className="badge badge--warn brand-tag">Tester mode</span>}
         </header>
       )}
       {inFlow && (
@@ -134,7 +166,9 @@ export default function App() {
 
       <main className="main">
         {stage === "welcome" && <Welcome onStart={() => setStage("consent")} />}
-        {stage === "consent" && <Consent busy={busy} onAgree={begin} />}
+        {stage === "consent" && (
+          <Consent busy={busy} policy={policy} tester={tester} onTesterChange={setTester} onAgree={begin} />
+        )}
         {stage === "camera" && ctxRef.current && <CameraCheck ctx={ctxRef.current} onReady={() => setStage("gaze")} />}
         {stage === "gaze" && ctxRef.current && <GazeStep ctx={ctxRef.current} onDone={next} onError={fail} />}
         {stage === "motor" && ctxRef.current && <MotorStep ctx={ctxRef.current} onDone={next} onError={fail} />}

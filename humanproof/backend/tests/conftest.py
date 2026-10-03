@@ -32,10 +32,38 @@ class Clock:
         self.now += seconds
 
 
+TEST_MASTER_SECRET = "dGVzdC1tYXN0ZXItc2VjcmV0LWZvci1odW1hbnByb29mLXRlc3RzLTAwMQ=="  # test fixture only
+TEST_COLLECTION_KEY = "tester-code-for-tests"
+
+
 @pytest.fixture
-def settings(tmp_path):
+def database_url():
+    """Empty for SQLite. With HP_TEST_DATABASE_URL set, every test runs against a
+    throwaway schema in that Postgres database instead."""
+    base = os.environ.get("HP_TEST_DATABASE_URL", "")
+    if not base:
+        yield ""
+        return
+    import secrets as _secrets
+
+    import psycopg
+
+    schema = "t_" + _secrets.token_hex(6)
+    with psycopg.connect(base, autocommit=True) as conn:
+        conn.execute(f"CREATE SCHEMA {schema}")
+    sep = "&" if "?" in base else "?"
+    yield f"{base}{sep}options=-csearch_path%3D{schema}"
+    with psycopg.connect(base, autocommit=True) as conn:
+        conn.execute(f"DROP SCHEMA {schema} CASCADE")
+
+
+@pytest.fixture
+def settings(tmp_path, database_url):
     return Settings(
         env="test",
+        database_url=database_url,
+        master_secret=TEST_MASTER_SECRET,
+        collection_key=TEST_COLLECTION_KEY,
         data_dir=tmp_path / "var",
         models_dir=MODELS_DIR,
         allow_heuristic_fallback=True,
@@ -71,6 +99,7 @@ def client(settings, transcriber, clock):
     with TestClient(app) as tc:
         tc.app_ctx = app.state.ctx
         yield tc
+    app.state.ctx.store.close()
 
 
 def has_motor_model() -> bool:

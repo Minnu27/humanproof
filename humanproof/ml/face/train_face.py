@@ -12,6 +12,8 @@ Honest evaluation:
 
     python ml/face/train_face.py --faces /data/faces --epochs 12 --out backend/models --cross-test celebdf
 
+Add snapshots collected by the app (ml/dataset/export.py) with ``--extra /data/hp-export/faces``.
+
 Output: face_deepfake.onnx (input float32 [N,3,224,224], ImageNet-normalised;
 output logits [N,2], index 1 = real) + metrics + manifest entry.
 """
@@ -69,7 +71,7 @@ class Faces(Dataset):
 
     def __getitem__(self, i):
         r = self.rows[i]
-        img = Image.open(self.root / r["path"]).convert("RGB").resize((224, 224))
+        img = Image.open(Path(r.get("root") or self.root) / r["path"]).convert("RGB").resize((224, 224))
         if self.train:
             img = augment(img, self.rng)
         x = ((np.asarray(img, dtype=np.float32) / 255 - MEAN) / STD).transpose(2, 0, 1)
@@ -109,6 +111,8 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--faces", type=Path, required=True)
+    ap.add_argument("--extra", type=Path, action="append", default=[],
+                    help="more crop folders with an index.csv, e.g. faces/ from ml/dataset/export.py")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--epochs", type=int, default=12)
     ap.add_argument("--batch", type=int, default=64)
@@ -118,7 +122,9 @@ def main():
     ap.add_argument("--no-pretrained", action="store_true")
     args = ap.parse_args()
 
-    rows = list(csv.DictReader(open(args.faces / "index.csv")))
+    rows = []
+    for root in [args.faces, *args.extra]:
+        rows += [{**r, "root": str(root)} for r in csv.DictReader(open(root / "index.csv"))]
     cross = [r for r in rows if args.cross_test and r["source"] == args.cross_test and r["split"] == "test"]
     rows = [r for r in rows if not (args.cross_test and r["source"] == args.cross_test)]
     tr = [r for r in rows if r["split"] == "train"]

@@ -1,14 +1,10 @@
-"""Train the optional gaze model (gaze.onnx) from real sessions.
+"""Train the optional gaze model (gaze.onnx) from two CSV files of gaze features.
 
-The gaze checkpoint works without a model (physiologically grounded rules: eye
-latency, cross-validated tracking of the secret path, micro-motion). Once you
-have real data, a model over the same features sharpens it:
-
-  positives: consented sessions from real people
-             (backend/tools/export_research.py --checkpoint gaze)
-  negatives: red-team sessions you run yourself with the attack tools you want
-             to stop (replayed video via a virtual camera, face-swap puppets,
-             scripted clients), exported the same way from a test deployment.
+Most people should use ``ml/retrain.py`` instead: it builds the examples from the
+sessions the app has collected (including replay examples made by measuring real
+recordings against other sessions' dot paths), holds out participants, and only
+adopts a model that beats the current check. This script is the bare trainer for
+feature tables you have assembled yourself (columns = ``GAZE_FEATURE_NAMES``).
 
     python ml/gaze/train_gaze.py --human gaze_human.csv --attack gaze_attack.csv --out backend/models
 """

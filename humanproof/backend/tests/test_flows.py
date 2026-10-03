@@ -83,10 +83,12 @@ def test_passkey_bind_reverify_and_delete(client, clock, transcriber):
     stale = dev.get(opts)
     assert client.post("/v1/passkey/assert/verify", json={"credential": stale}).status_code == 400
 
-    # the user deletes their data
+    # the user deletes their data, including anything stored for training
+    assert len(list(client.app_ctx.store.iter_samples())) == 4
     opts = client.post("/v1/passkey/assert/options", json={"purpose": "delete"}).json()
     r = client.post("/v1/passkey/assert/verify", json={"credential": dev.get(opts)})
     assert r.json() == {"status": "deleted"}
+    assert list(client.app_ctx.store.iter_samples()) == []
     state = client.app_ctx.store.get_session(sid)["state"]
     assert client.app_ctx.store.get_subject(state["subject_id"]) is None
     opts = client.post("/v1/passkey/assert/options", json={"purpose": "reverify"}).json()

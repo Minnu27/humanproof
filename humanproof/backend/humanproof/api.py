@@ -9,11 +9,15 @@ Flow for one verification:
   POST /v1/sessions/{id}/passkey/options|verify       bind a device passkey to the verified human
 Later:
   POST /v1/passkey/assert/options|verify              quick re-verification or data deletion
+  GET  /v1/data/policy                                whether this server stores data, and for how long
+  POST /v1/data/delete                                delete an attempt's stored samples by receipt
   GET  /.well-known/jwks.json                         public keys for relying parties
 """
 from __future__ import annotations
 
 import base64
+import binascii
+import hmac
 import json
 import logging
 import secrets
@@ -25,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import challenges as chmod
+from . import collection
 from .context import Context
 from .schemas import (
     CONSENT_VERSION, Attestation, CheckpointResult, CreateSessionRequest, CreateSessionResponse,
@@ -109,6 +114,14 @@ def create_session(body: CreateSessionRequest, request: Request, c: Context = De
     fp = client_fingerprint(c.pairwise_secret, client_ip(request))
     if c.store.count_recent_sessions(fp, 3600) >= c.settings.session_limit_per_hour:
         raise HTTPException(429, "Too many verification attempts; try again later")
+    capture, receipt = _plan_capture(body, request, c)
+    if secrets.randbelow(25) == 0:
+        # Serverless instances are frozen between requests, so the background purge
+        # loop cannot be relied on there; clean up now and then on the request path.
+        try:
+            c.store.purge_expired()
+        except Exception:
+            log.exception("Purge failed")
     sid = b64u(secrets.token_bytes(32))
     state = {
         "version": 0,
@@ -116,18 +129,41 @@ def create_session(body: CreateSessionRequest, request: Request, c: Context = De
         "assurance": "web",
         "relying_party": body.relying_party,
         "consent_version": CONSENT_VERSION,
-        "research_opt_in": body.consent.research_opt_in,
+        "capture": capture,
         "attest_challenge": b64u(secrets.token_bytes(32)),
         "challenges": chmod.make_challenge_set(),
         "steps": {},
         "finalized": False,
     }
     c.store.create_session(sid, fp, body.platform, state, c.settings.session_ttl_seconds)
-    c.store.audit("session_created", {"session": sid[:12], "platform": body.platform, "rp": body.relying_party})
+    c.store.audit("session_created", {
+        "session": sid[:12], "platform": body.platform, "rp": body.relying_party,
+        "capture": capture["mode"] if capture else "none",
+    })
+    storing = "nothing" if capture is None else ("measurements_and_media" if capture["media"] else "measurements")
     return CreateSessionResponse(
         session_id=sid, expires_in=c.settings.session_ttl_seconds, steps=list(STEPS),
         assurance="web", attestation_challenge=state["attest_challenge"],
+        storing=storing, data_receipt=receipt, labelled=bool(capture and capture["mode"] == "labelled"),
     )
+
+
+def _plan_capture(body: CreateSessionRequest, request: Request, c: Context) -> tuple[dict | None, str | None]:
+    """Decide what, if anything, this session stores. See collection.py."""
+    if body.collection is not None:
+        _rate_limit(request, c, "collect", 10)  # also slows guessing of the tester code
+        if not c.tester_mode:
+            raise HTTPException(403, "Tester mode is not enabled on this server")
+        if not hmac.compare_digest(body.collection.code.encode(), c.settings.collection_key.encode()):
+            c.store.audit("collection_code_rejected", {})
+            raise HTTPException(403, "Wrong tester code")
+        return collection.new_capture(
+            "labelled", media=True, participant=body.collection.participant,
+            label=body.collection.label, attack_type=body.collection.attack_type,
+        )
+    if c.collection_ready and (body.consent.research_opt_in or body.consent.media_opt_in):
+        return collection.new_capture("opt_in", media=body.consent.media_opt_in)
+    return None, None
 
 
 @router.post("/v1/sessions/{sid}/attest")
@@ -240,7 +276,20 @@ async def submit_gaze(sid: str, request: Request, c: Context = Depends(ctx)):
         sub.face_crops, c.models.get("face_deepfake"), c.settings.allow_heuristic_fallback
     )
     state["face"] = {"score": round(float(fs), 4), "reasons": freasons, "info": _jsonable(finfo)}
-    return _finish_submit(c, sid, "gaze", state, s, reasons, feats)
+    result = _finish_submit(c, sid, "gaze", state, s, reasons, feats)
+    if state.get("capture"):
+        collection.store(c, state, "gaze", "signals", collection.pack_json({
+            "challenge": state["challenges"]["gaze"], "frames": [f.model_dump() for f in sub.frames],
+            "viewport": sub.viewport.model_dump(), "features": _jsonable(feats), "reasons": reasons,
+        }), s)
+        collection.store(c, state, "face", "signals", collection.pack_json(
+            {"info": _jsonable(finfo), "reasons": freasons, "crops": len(sub.face_crops)}), fs)
+        for crop in sub.face_crops:
+            try:
+                collection.store(c, state, "face", "image", collection.pack_raw(base64.b64decode(crop, validate=True)), fs)
+            except (binascii.Error, ValueError):
+                pass  # not valid base64: already scored as a failed crop
+    return result
 
 
 @router.post("/v1/sessions/{sid}/checkpoints/motor", response_model=CheckpointResult)
@@ -252,7 +301,13 @@ async def submit_motor(sid: str, request: Request, c: Context = Depends(ctx)):
     _check_device_binding(c, request, sid, state, body)
     ch = chmod.motor_from_dict(state["challenges"]["motor"])
     s, reasons, feats = motor.score(ch, sub, c.models.get("motor"))
-    return _finish_submit(c, sid, "motor", state, s, reasons, feats)
+    result = _finish_submit(c, sid, "motor", state, s, reasons, feats)
+    if state.get("capture"):
+        collection.store(c, state, "motor", "signals", collection.pack_json({
+            "challenge": state["challenges"]["motor"], "submission": sub.model_dump(),
+            "features": _jsonable(feats), "reasons": reasons,
+        }), s)
+    return result
 
 
 @router.post("/v1/sessions/{sid}/checkpoints/voice", response_model=CheckpointResult)
@@ -273,7 +328,18 @@ async def submit_voice(sid: str, request: Request, c: Context = Depends(ctx)):
     if embedding is not None:
         # Held only until finalize, encrypted; dropped if the session does not pass.
         state["pending_voiceprint"] = c.keyring.encrypt(embedding.tobytes(), f"vp:{sid}".encode()).decode()
-    return _finish_submit(c, sid, "voice", state, s, reasons, feats)
+    result = _finish_submit(c, sid, "voice", state, s, reasons, feats)
+    if state.get("capture"):
+        collection.store(c, state, "voice", "signals", collection.pack_json({
+            "words": state["challenges"]["voice"]["words"], "mouth_frames": [f.model_dump() for f in sub.mouth_frames],
+            "audio_offset_ms": sub.audio_offset_ms, "features": _jsonable(feats), "reasons": reasons,
+        }), s)
+        try:
+            collection.store(c, state, "voice", "audio",
+                             collection.pack_raw(base64.b64decode(sub.audio_wav_b64, validate=True)), s)
+        except (binascii.Error, ValueError):
+            pass
+    return result
 
 
 @router.post("/v1/sessions/{sid}/finalize", response_model=Decision)
@@ -293,7 +359,13 @@ def finalize(sid: str, request: Request, c: Context = Depends(ctx)):
     reasons += state.get("face", {}).get("reasons", [])
 
     token, hint = None, None
-    if result.decision == "pass":
+    capture = state.get("capture")
+    labelled = bool(capture and capture["mode"] == "labelled")
+    if labelled:
+        # A tester session exists to be recorded, and may be a deliberate attack:
+        # it reports the verdict but never yields a credential.
+        reasons.append("tester session: no proof token is issued")
+    if result.decision == "pass" and not labelled:
         subject = b64u(secrets.token_bytes(24))
         vp_blob = None
         if state.get("pending_voiceprint"):
@@ -303,17 +375,17 @@ def finalize(sid: str, request: Request, c: Context = Depends(ctx)):
         state["subject_id"] = subject
         token = _issue_token(c, subject, state["relying_party"], state["assurance"], scores, "full")
         hint = pairwise_subject(c.pairwise_secret, subject, state["relying_party"])
-        if state.get("research_opt_in") and c.settings.data_collection_enabled:
-            _store_research(c, sid, state)
     state.pop("pending_voiceprint", None)
     state["finalized"] = True
     state["decision"] = result.decision
     _save(c, sid, state)
+    collection.finish(c, state, result.decision, state.get("subject_id"))
     c.store.audit("finalized", {"session": sid[:12], "decision": result.decision, "score": round(result.score, 3)})
     return Decision(
         decision=result.decision, score=round(result.score, 3), assurance=state["assurance"],
         checkpoints={k: round(v, 3) for k, v in scores.items()}, reasons=sorted(set(reasons)),
         attestation_token=token, subject_hint=hint, debug=_debug(c, state),
+        data_stored=bool(capture and c.collection_ready),
     )
 
 
@@ -338,16 +410,6 @@ def _issue_token(c: Context, subject: str, rp: str, assurance: str, scores: dict
         "hp_scores": {k: round(v, 2) for k, v in scores.items()},
     }
     return tokens.sign(c.signing, claims, c.settings.token_ttl_seconds, c.issuer)
-
-
-def _store_research(c: Context, sid: str, state: dict) -> None:
-    for cp in STEPS:
-        feats = state["steps"][cp].get("features") or {}
-        payload = json.dumps({"label": "passed_human", "features": feats}).encode()
-        rid = b64u(secrets.token_bytes(16))
-        c.store.add_research_sample(
-            rid, cp, state["consent_version"], c.keyring.encrypt(payload, f"research:{rid}".encode())
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -417,10 +479,6 @@ def passkey_verify(sid: str, body: WebAuthnPayload, request: Request, c: Context
     return {"status": "bound"}
 
 
-# Pending passkey assertions, keyed by challenge. Short-lived and single-use.
-_ASSERTIONS: dict[str, dict] = {}
-
-
 @router.post("/v1/passkey/assert/options")
 def assert_options(body: AssertOptionsRequest, request: Request, c: Context = Depends(ctx)):
     from webauthn import generate_authentication_options, options_to_json
@@ -430,12 +488,8 @@ def assert_options(body: AssertOptionsRequest, request: Request, c: Context = De
     opts = generate_authentication_options(
         rp_id=c.settings.rp_id, user_verification=UserVerificationRequirement.REQUIRED
     )
-    now = time.time()
-    for k in [k for k, v in _ASSERTIONS.items() if v["exp"] < now]:
-        del _ASSERTIONS[k]
-    if len(_ASSERTIONS) > 10_000:
-        raise HTTPException(503, "Busy")
-    _ASSERTIONS[b64u(opts.challenge)] = {"exp": now + 120, "purpose": body.purpose, "rp": body.relying_party}
+    # Kept in the database, not in memory: the verify call may reach another instance.
+    c.store.put_assertion(b64u(opts.challenge), 120, body.purpose, body.relying_party)
     return json.loads(options_to_json(opts))
 
 
@@ -446,11 +500,11 @@ def assert_verify(body: WebAuthnPayload, request: Request, c: Context = Depends(
     _rate_limit(request, c, "assert", 20)
     try:
         client_data = json.loads(b64u_decode(body.credential["response"]["clientDataJSON"]))
-        pending = _ASSERTIONS.pop(client_data["challenge"])
+        pending = c.store.pop_assertion(str(client_data["challenge"]))  # single-use, expiry checked
         cred = c.store.get_credential(body.credential["id"])
     except Exception as exc:
         raise HTTPException(400, "Unknown or expired passkey challenge") from exc
-    if pending["exp"] < time.time() or cred is None:
+    if pending is None or cred is None:
         raise HTTPException(400, "Unknown or expired passkey challenge")
     try:
         v = verify_authentication_response(
@@ -467,11 +521,41 @@ def assert_verify(body: WebAuthnPayload, request: Request, c: Context = Depends(
         raise HTTPException(401, "Passkey verification failed")
     if pending["purpose"] == "delete":
         c.store.delete_subject(subject["id"])
-        c.store.audit("subject_deleted", {"by": "passkey"})
+        n = c.store.delete_samples(subject_hash=collection.subject_hash(c.pairwise_secret, subject["id"]))
+        c.store.audit("subject_deleted", {"by": "passkey", "samples": n})
         return {"status": "deleted"}
     token = _issue_token(c, subject["id"], pending["rp"], subject["assurance"], {}, "passkey")
     c.store.audit("reverified", {"rp": pending["rp"]})
     return {"attestation_token": token}
+
+
+# ---------------------------------------------------------------------------
+# Stored samples: deletion by the person they came from
+# ---------------------------------------------------------------------------
+
+class DeleteDataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    receipt: str = Field(min_length=10, max_length=100)
+
+
+@router.get("/v1/data/policy")
+def data_policy(c: Context = Depends(ctx)):
+    """What this server can keep, so the consent screen only offers real choices."""
+    return {
+        "sharing": c.collection_ready,
+        "tester_mode": c.tester_mode,
+        "retention_days": c.settings.data_retention_days,
+    }
+
+
+@router.post("/v1/data/delete")
+def delete_data(body: DeleteDataRequest, request: Request, c: Context = Depends(ctx)):
+    """Delete everything stored from one attempt. The receipt was shown to the
+    person at the time; it is the only thing that links them to the rows."""
+    _rate_limit(request, c, "datadel", 10)
+    n = c.store.delete_samples(receipt_hash=collection.receipt_hash(body.receipt))
+    c.store.audit("samples_deleted", {"by": "receipt", "n": n})
+    return {"deleted": n}
 
 
 # ---------------------------------------------------------------------------
@@ -515,4 +599,12 @@ def status(c: Context = Depends(ctx)):
         "asr": c.transcriber is not None,
         "heuristic_fallback": c.settings.allow_heuristic_fallback,
         "audit_chain_ok": c.store.verify_audit_chain(),
+        "storage": c.store.backend,
+        "persistent_keys": c.settings.has_persistent_keys,
+        "collection": {
+            "active": c.collection_ready,
+            "not_active_because": c.collection_blocker or None,
+            "tester_mode": c.tester_mode,
+            "stored": c.store.sample_counts() if c.collection_ready else [],
+        },
     }

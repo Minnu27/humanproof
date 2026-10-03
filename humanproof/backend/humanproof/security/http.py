@@ -105,6 +105,13 @@ class RateLimiter:
 
 
 def client_ip(request: Request) -> str:
-    # Behind a reverse proxy, configure uvicorn --proxy-headers --forwarded-allow-ips
-    # so request.client reflects the real peer. Never trust X-Forwarded-For directly.
+    # Behind your own reverse proxy, configure uvicorn --proxy-headers --forwarded-allow-ips
+    # so request.client reflects the real peer. A forwarding header is trusted only
+    # when the deployment says the platform's edge sets it (HP_TRUSTED_IP_HEADER).
+    ctx = getattr(request.app.state, "ctx", None)
+    header = ctx.settings.trusted_ip_header if ctx is not None else ""
+    if header:
+        value = request.headers.get(header, "").split(",")[0].strip()
+        if value:
+            return value[:64]
     return request.client.host if request.client else "unknown"

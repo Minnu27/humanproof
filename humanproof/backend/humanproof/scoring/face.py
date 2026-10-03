@@ -4,7 +4,8 @@
   crop real vs manipulated/synthetic.
 * Crops must differ from each other: a static photo or frozen frame fails.
 
-Crops are decoded in memory with strict size limits and never stored.
+Crops are decoded in memory with strict size limits. This module never stores
+them; they are kept only when the person agreed to that (see collection.py).
 """
 from __future__ import annotations
 

@@ -11,12 +11,13 @@ from humanproof.security.crypto import b64u_decode
 
 from conftest import has_motor_model
 
-CONSENT = {"version": "2026-09-v1", "biometric_processing": True, "research_opt_in": True}
+CONSENT = {"version": "2026-10-v2", "biometric_processing": True, "research_opt_in": True}
 
 
 def new_session(client, **extra):
     r = client.post("/v1/sessions", json={"platform": "web", "consent": CONSENT, **extra})
     assert r.status_code == 200, r.text
+    client.last_session = r.json()
     return r.json()["session_id"]
 
 
@@ -30,8 +31,8 @@ def gaze_challenge_from_public(pub):
     return C.gaze_from_dict({**pub})
 
 
-def run_flow(client, clock, transcriber, rng, *, human=True, rp="bank.example"):
-    sid = new_session(client, relying_party=rp)
+def run_flow(client, clock, transcriber, rng, *, human=True, rp="bank.example", **session_extra):
+    sid = new_session(client, relying_party=rp, **session_extra)
 
     pub = start(client, sid, "gaze")
     ch = gaze_challenge_from_public(pub)
@@ -99,8 +100,8 @@ def test_full_flow_human_passes_and_token_verifies(client, clock, transcriber):
     state = client.app_ctx.store.get_session(sid)["state"]
     subject = client.app_ctx.store.get_subject(state["subject_id"])
     assert "pending_voiceprint" not in state
-    samples = list(client.app_ctx.store.iter_research_samples("gaze"))
-    assert samples and b"evidence" not in samples[0]["payload"]
+    samples = [s for s in client.app_ctx.store.iter_samples() if s["checkpoint"] == "gaze"]
+    assert samples and b"evidence" not in samples[0]["payload"] and b"frames" not in samples[0]["payload"]
     assert client.get("/v1/status").json()["audit_chain_ok"] is True
     assert subject is not None
 
@@ -220,8 +221,8 @@ def test_audit_chain_detects_tampering(client):
     new_session(client)
     store = client.app_ctx.store
     assert store.verify_audit_chain()
-    with store._conn() as c:
-        c.execute("UPDATE audit SET data = '{\"forged\":1}' WHERE seq = 1")
+    first = store.execute_raw("SELECT MIN(seq) AS s FROM audit")[0]["s"]
+    store.execute_raw("UPDATE audit SET data = ? WHERE seq = ?", ('{"forged":1}', first))
     assert not store.verify_audit_chain()
 
 
@@ -303,3 +304,20 @@ def test_debug_measurements_only_outside_production(client, clock, transcriber):
     client.app_ctx.settings.env = "prod"
     _, d = run_flow(client, clock, transcriber, np.random.default_rng(32))
     assert d["debug"] is None
+
+
+def test_attempt_limit_is_per_visitor_when_the_platform_supplies_the_address(client):
+    """On Vercel every request arrives from the platform's proxy; the per-visitor
+    limits must follow the address the edge reports, not the proxy's."""
+    s = client.app_ctx.settings
+    s.session_limit_per_hour, s.trusted_ip_header = 2, "x-real-ip"
+    body = {"platform": "web", "consent": CONSENT}
+    for _ in range(2):
+        assert client.post("/v1/sessions", json=body, headers={"x-real-ip": "203.0.113.7"}).status_code == 200
+    assert client.post("/v1/sessions", json=body, headers={"x-real-ip": "203.0.113.7"}).status_code == 429
+    assert client.post("/v1/sessions", json=body, headers={"x-real-ip": "203.0.113.8"}).status_code == 200
+    # Without the setting the header is ignored: a client cannot pick its own identity.
+    s.trusted_ip_header = ""
+    for _ in range(2):
+        client.post("/v1/sessions", json=body, headers={"x-real-ip": "198.51.100.1"})
+    assert client.post("/v1/sessions", json=body, headers={"x-real-ip": "198.51.100.2"}).status_code == 429
