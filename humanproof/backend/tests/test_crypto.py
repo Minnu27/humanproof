@@ -105,3 +105,16 @@ def test_pairwise_subjects_unlinkable():
     b = pairwise_subject(secret, "human-1", "dating.example")
     assert a != b
     assert a == pairwise_subject(secret, "human-1", "bank.example")
+
+
+def test_signing_key_inline_base64(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+
+    pem = Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    path = tmp_path / "k.pem"
+    path.write_bytes(pem)
+    from_file = SigningKeySet.from_spec(f"k1:{path}")
+    inline = SigningKeySet.from_spec("k1:b64:" + base64.b64encode(pem).decode())
+    assert from_file.jwks() == inline.jwks()

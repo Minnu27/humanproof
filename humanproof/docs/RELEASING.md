@@ -7,7 +7,7 @@ builds everything. Configure these first in GitHub → Settings → Secrets and 
 
 | Name | Example |
 |---|---|
-| `API_BASE` | `https://api.humanproof.example` |
+| `API_BASE` | Full API URL including its path: `https://your-domain/api` on Vercel, `https://api.humanproof.example` for a dedicated API host |
 | `RELYING_PARTY` | `humanproof` |
 | `PLAY_CLOUD_PROJECT` | Google Cloud project number linked to Play Integrity |
 

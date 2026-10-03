@@ -149,10 +149,15 @@ class SigningKeySet:
 
     @classmethod
     def from_spec(cls, spec: str) -> "SigningKeySet":
+        """``kid:/path/to/key.pem`` or ``kid:b64:<base64 of the PEM>`` (for hosts
+        such as Vercel where secrets are environment variables, not files)."""
         keys = []
         for part in filter(None, (p.strip() for p in spec.split(","))):
-            kid, _, path = part.partition(":")
-            pem = Path(path).read_bytes()
+            kid, _, source = part.partition(":")
+            if source.startswith("b64:"):
+                pem = base64.b64decode(source[4:])
+            else:
+                pem = Path(source).read_bytes()
             priv = serialization.load_pem_private_key(pem, password=None)
             if not isinstance(priv, Ed25519PrivateKey):
                 raise CryptoError(f"Signing key {kid} is not Ed25519")

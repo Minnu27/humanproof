@@ -1,0 +1,4 @@
+# Speech recognition for the voice phrase check. Required when HP_ASR_MODEL is set
+# (production). Kept separate because it roughly doubles the install size, which
+# matters on size-limited hosts such as Vercel functions.
+faster-whisper>=1.1

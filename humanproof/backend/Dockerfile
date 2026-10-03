@@ -1,17 +1,18 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.11-slim AS build
+FROM python:3.12-slim AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --prefix=/install -r requirements.txt
+COPY requirements.txt requirements-asr.txt ./
+RUN pip install --prefix=/install -r requirements.txt -r requirements-asr.txt
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HP_ENV=prod
 RUN groupadd -r app && useradd -r -g app -d /app -s /usr/sbin/nologin app \
  && mkdir -p /var/lib/humanproof && chown app:app /var/lib/humanproof
 COPY --from=build /install /usr/local
 WORKDIR /app
 COPY humanproof ./humanproof
+COPY app.py ./
 COPY tools ./tools
 COPY models ./models
 USER app

@@ -1,0 +1,11 @@
+# Not part of the web deployment
+humanproof/ml
+humanproof/docs
+humanproof/sdk
+humanproof/backend/tests
+humanproof/backend/var
+humanproof/backend/secrets
+humanproof/client/android
+humanproof/client/ios
+humanproof/client/native
+humanproof/client/src-tauri

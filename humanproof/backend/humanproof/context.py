@@ -50,6 +50,13 @@ def build_context(settings: Settings, transcriber: Transcriber | None = None) ->
             keyring = KeyRing.from_spec(settings.kek_keyring)
         if settings.signing_keys:
             signing = SigningKeySet.from_spec(settings.signing_keys)
+        if settings.pairwise_secret:
+            pairwise = base64.b64decode(settings.pairwise_secret)
+        if not (settings.kek_keyring and settings.signing_keys and settings.pairwise_secret):
+            # Generated keys live on this machine's disk only. On hosts that run
+            # several instances (Vercel), each instance would sign with its own key.
+            log.warning("Using locally generated dev keys; set HP_KEK_KEYRING, HP_SIGNING_KEYS "
+                        "and HP_PAIRWISE_SECRET for any deployment with more than one instance")
 
     models = ModelRegistry(settings.models_dir)
     if settings.env == "prod":

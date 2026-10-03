@@ -266,3 +266,28 @@ def test_tampered_model_refused(tmp_path):
 def test_openapi_hidden_in_prod_only(client):
     assert client.get("/openapi.json").status_code == 200  # test env
     assert b64u_decode(base64.urlsafe_b64encode(b"x").decode().rstrip("=")) == b"x"
+
+
+def test_api_prefix_mounts_every_route(settings, transcriber, clock):
+    """On Vercel the service receives the full public path (/api/...)."""
+    from fastapi.testclient import TestClient
+
+    from humanproof.main import create_app
+
+    settings.api_prefix = "/api"
+    with TestClient(create_app(settings, transcriber=transcriber)) as c:
+        assert c.get("/api/healthz").status_code == 200
+        assert c.get("/api/.well-known/jwks.json").json()["keys"]
+        assert c.post("/api/v1/sessions", json={"platform": "web", "consent": CONSENT}).status_code == 200
+        assert c.get("/api/openapi.json").status_code == 200
+        assert c.get("/healthz").status_code == 404
+
+
+def test_invalid_api_prefix_rejected():
+    from pydantic import ValidationError
+
+    from humanproof.config import Settings
+
+    for bad in ("api", "/api/", "/API", "/api?x"):
+        with pytest.raises(ValidationError):
+            Settings(api_prefix=bad)

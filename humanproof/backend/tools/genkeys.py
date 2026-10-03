@@ -37,6 +37,8 @@ def main() -> None:
     pairwise = base64.b64encode(secrets.token_bytes(32)).decode()
     print(f"HP_KEK_KEYRING={args.kid}:{kek}")
     print(f"HP_SIGNING_KEYS={args.kid}:{key_path}")
+    print("# or, where secrets must be environment variables (e.g. Vercel):")
+    print(f"HP_SIGNING_KEYS={args.kid}:b64:{base64.b64encode(pem).decode()}")
     print(f"HP_PAIRWISE_SECRET={pairwise}")
 
 

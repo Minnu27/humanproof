@@ -11,8 +11,5 @@ google-auth==2.59.0
 requests==2.33.1
 httpx==0.28.1
 numpy==2.4.4
-scipy==1.17.1
 onnxruntime==1.25.0
 pillow==12.3.0
-# Speech recognition for the phrase check (required in production)
-faster-whisper>=1.1

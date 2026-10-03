@@ -1,4 +1,6 @@
 -r requirements.txt
+scipy>=1.13
+onnx>=1.17
 pytest>=8
 pytest-cov>=5
 bandit>=1.8

@@ -48,9 +48,9 @@ def create_app(settings: Settings | None = None, transcriber: Transcriber | None
         lifespan=lifespan,
         title="HumanProof",
         version="1.0.0",
-        docs_url=None if is_prod else "/docs",
+        docs_url=None if is_prod else f"{settings.api_prefix}/docs",
         redoc_url=None,
-        openapi_url=None if is_prod else "/openapi.json",
+        openapi_url=None if is_prod else f"{settings.api_prefix}/openapi.json",
     )
     app.state.ctx = context
 
@@ -75,7 +75,7 @@ def create_app(settings: Settings | None = None, transcriber: Transcriber | None
         log.exception("Unhandled error")  # stack trace to logs only, never to clients
         return JSONResponse({"detail": "Internal error"}, status_code=500)
 
-    app.include_router(router)
+    app.include_router(router, prefix=settings.api_prefix)
     return app
 
 

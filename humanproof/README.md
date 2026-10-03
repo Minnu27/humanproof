@@ -32,13 +32,16 @@ docs/     Threat model, security controls (OWASP ASVS map), privacy, models, rel
 # API (dev mode lets the voice/face checkpoints run on heuristics until you train those models)
 cd backend
 pip install -r requirements-dev.txt
-HP_ENV=dev HP_ALLOW_HEURISTIC_FALLBACK=true uvicorn humanproof.main:app --port 8000
+HP_ENV=dev HP_ALLOW_HEURISTIC_FALLBACK=true HP_API_PREFIX=/api uvicorn humanproof.main:app --port 8000
 
 # App (new terminal)
 cd client
 npm install
 npm run dev        # downloads the face-tracking model once, then serves http://localhost:5173
 ```
+
+The web app calls the API at `/api` on its own origin; `npm run dev` proxies that to
+port 8000. `vercel dev` from the repository root runs both together the same way Vercel does.
 
 The first `npm run dev` pins the face-tracking model's SHA-256 in
 `client/models.lock.json`. Commit that file; from then on any changed model file fails the build.
@@ -53,7 +56,7 @@ cd backend && pytest --cov=humanproof      # 82 tests, ~90% coverage
 HP_IITKGP_DATA=/path/to/Mouse-Dynamics pytest -k real_held_out   # motor model on real unseen people
 bandit -r humanproof tools && pip-audit -r requirements.txt
 cd ../client && npm run typecheck && npm run build && npm audit
-python -m tools.e2e_probe --kind bot       # from backend/, against a running server
+python -m tools.e2e_probe --kind bot --base http://127.0.0.1:8000/api   # from backend/, against a running server
 ```
 
 CI (`.github/workflows/`) runs all of the above plus CodeQL, gitleaks, Trivy and
@@ -67,7 +70,8 @@ version tag builds installers for Windows, macOS, Linux, Android and iOS.
 2. **Generate keys:** `python -m tools.genkeys --out ./secrets`; fill `.env` from
    `backend/.env.example`. Production refuses to start with dev keys, HTTP, wildcard
    origins, missing models, or missing speech recognition.
-3. **Deploy:** `docker compose up -d` in `backend/` (API behind Caddy with automatic HTTPS).
+3. **Deploy:** `docker compose up -d` in `backend/` (API behind Caddy with automatic HTTPS),
+   or web app + API together on Vercel (`docs/VERCEL.md`).
 4. **Ship the apps:** set the repository variables and signing secrets listed in
    `docs/RELEASING.md`, then push a tag `v1.0.0`.
 5. **Get certified before selling to banks:** an accredited ISO/IEC 30107-3

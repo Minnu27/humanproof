@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11", cache: pip }
+        with: { python-version: "3.12", cache: pip }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: pip install -r requirements-dev.txt
@@ -22,7 +22,7 @@ jobs:
       - name: Static analysis (bandit)
         run: bandit -q -r humanproof tools -ll
       - name: Dependency vulnerabilities (pip-audit)
-        run: pip-audit -r requirements.txt --strict
+        run: pip-audit -r requirements.txt -r requirements-asr.txt --strict
 
   motor-model:
     # Retrains the motor model from real public data so the shipped model is reproducible.
@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11", cache: pip }
+        with: { python-version: "3.12", cache: pip }
       - run: pip install -r ml/requirements.txt -r backend/requirements.txt
       - run: git clone --depth 1 https://github.com/prativa-97/Mouse-Dynamics /tmp/iitkgp
       - run: python ml/motor/train.py --iitkgp /tmp/iitkgp --out /tmp/models

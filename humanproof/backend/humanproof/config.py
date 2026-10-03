@@ -5,6 +5,8 @@ mode refuses to start with insecure defaults (see ``Settings.validate_for_env``)
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -13,13 +15,21 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _default_data_dir() -> Path:
+    if os.environ.get("VERCEL"):
+        return Path(tempfile.gettempdir()) / "humanproof"
+    return Path("./var")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="HP_", env_file=".env", extra="ignore")
 
     env: Literal["dev", "test", "prod"] = "dev"
 
     # --- storage -----------------------------------------------------------
-    data_dir: Path = Path("./var")
+    # On Vercel the deployment filesystem is read-only; only the instance's own
+    # temp directory is writable (and it is not shared or persistent).
+    data_dir: Path = Field(default_factory=lambda: _default_data_dir())
     db_filename: str = "humanproof.sqlite3"
 
     # --- keys ----------------------------------------------------------------
@@ -30,6 +40,12 @@ class Settings(BaseSettings):
     signing_keys: str = ""
     # Secret for pairwise pseudonymous subject IDs and audit HMACs (base64, 32 bytes).
     pairwise_secret: str = ""
+
+    # --- routing ----------------------------------------------------------------
+    # Path prefix the API is mounted under. Vercel passes the original request
+    # path to the service (a request to /api/v1/sessions arrives as
+    # /api/v1/sessions), so the Vercel deployment sets HP_API_PREFIX=/api.
+    api_prefix: str = Field(default="", pattern=r"^(/[a-z0-9\-]+)*$")
 
     # --- web / CORS ----------------------------------------------------------
     allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
@@ -52,7 +68,9 @@ class Settings(BaseSettings):
     token_ttl_seconds: int = 900
 
     # --- models --------------------------------------------------------------
-    models_dir: Path = Path("./models")
+    # Default is next to the package, so it resolves the same way whatever the
+    # process's working directory is (Docker, uvicorn, a Vercel function).
+    models_dir: Path = Path(__file__).resolve().parents[1] / "models"
     # Dev only: allow checkpoints to run on signal heuristics when a trained
     # model is missing. Production refuses to start with this enabled.
     allow_heuristic_fallback: bool = False

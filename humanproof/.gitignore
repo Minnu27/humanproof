@@ -15,3 +15,7 @@ client/ios/App/App/public/
 client/android/.gradle/
 client/android/build/
 client/android/app/build/
+
+# Vercel / local virtualenvs
+.vercel/
+.venv/

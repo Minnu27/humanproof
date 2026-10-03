@@ -4,7 +4,11 @@
 // genuine app and were not modified in transit.
 import { deviceBindingHeaders, type Platform } from "./platform";
 
-export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "http://localhost:8000";
+// Web builds call the API on the same origin under /api (Vercel routes /api/* to the
+// backend service; `npm run dev` proxies it). Desktop and mobile builds are not
+// served from that origin, so they are built with an absolute VITE_API_BASE,
+// e.g. https://humanproof.example/api.
+export const API_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) || "/api").replace(/\/$/, "");
 export const RELYING_PARTY = (import.meta.env.VITE_RELYING_PARTY as string | undefined) ?? "humanproof";
 export const CONSENT_VERSION = "2026-09-v1";
 
